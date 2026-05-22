@@ -7,3 +7,6 @@
 /storage/logs
 /.vscode
 /.idea
+/node_modules
+/public/hot
+/public/build
