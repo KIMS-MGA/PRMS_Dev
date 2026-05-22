@@ -1,0 +1,9 @@
+.env
+/vendor
+/node_modules
+/public/build
+/storage/framework
+/storage/debugbar
+/storage/logs
+/.vscode
+/.idea
