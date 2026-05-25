@@ -2,11 +2,9 @@
 /vendor
 /node_modules
 /public/build
+/public/hot
 /storage/framework
 /storage/debugbar
 /storage/logs
 /.vscode
 /.idea
-/node_modules
-/public/hot
-/public/build
