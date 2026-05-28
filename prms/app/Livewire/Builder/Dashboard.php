@@ -23,16 +23,49 @@ class Dashboard extends Component
         $this->showPastTrc = !$this->showPastTrc;
     }
 
+    /**
+     * Get a scoped record query builder respecting my_records_only setting per module.
+     */
+    private function getScopedRecordQuery()
+    {
+        $user = auth()->user();
+        $query = Record::query();
+
+        if ($user->hasRole('super admin') || $user->hasRole('Reviewer') || $user->hasRole('TRC Secretariat')) {
+            return $query;
+        }
+
+        $restrictedModuleIds = Module::where('my_records_only', true)->pluck('id')->toArray();
+        $unrestrictedModuleIds = Module::where('my_records_only', false)->pluck('id')->toArray();
+
+        $query->where(function ($q) use ($restrictedModuleIds, $unrestrictedModuleIds, $user) {
+            if (!empty($unrestrictedModuleIds)) {
+                $q->orWhereIn('module_id', $unrestrictedModuleIds);
+            }
+            if (!empty($restrictedModuleIds)) {
+                $q->orWhere(function ($sub) use ($restrictedModuleIds, $user) {
+                    $sub->whereIn('module_id', $restrictedModuleIds)
+                        ->where('created_by', $user->id);
+                });
+            }
+        });
+
+        return $query;
+    }
+
     #[Layout('layouts.app')]
     public function render()
     {
         $user = auth()->user();
 
         // Total records excluding Draft and Archived
-        $totalRecords = Record::whereNotIn('status', ['Draft', 'Archived'])->count();
+        $totalRecords = $this->getScopedRecordQuery()
+            ->whereNotIn('status', ['Draft', 'Archived'])
+            ->count();
 
         // Status sub-counts
-        $statusCounts = Record::whereNotIn('status', ['Draft', 'Archived'])
+        $statusCounts = $this->getScopedRecordQuery()
+            ->whereNotIn('status', ['Draft', 'Archived'])
             ->selectRaw('status, count(*) as count')
             ->groupBy('status')
             ->pluck('count', 'status');
@@ -50,7 +83,8 @@ class Dashboard extends Component
         ];
 
         // Chart: records created over last 30 days — single grouped query
-        $trendRaw = Record::where('created_at', '>=', now()->subDays(29)->startOfDay())
+        $trendRaw = $this->getScopedRecordQuery()
+            ->where('created_at', '>=', now()->subDays(29)->startOfDay())
             ->selectRaw("DATE(created_at) as date, COUNT(*) as count")
             ->groupBy('date')
             ->pluck('count', 'date');
@@ -71,7 +105,8 @@ class Dashboard extends Component
         // Per-module stats — single aggregated query instead of 3N queries
         $modules = Module::whereNull('source_module_id')->orderBy('sort_order')->get();
         $moduleIds = $modules->pluck('id');
-        $statRows = Record::whereIn('module_id', $moduleIds)
+        $statRows = $this->getScopedRecordQuery()
+            ->whereIn('module_id', $moduleIds)
             ->selectRaw("module_id,
                 SUM(CASE WHEN status NOT IN ('Draft','Archived') THEN 1 ELSE 0 END) as total,
                 SUM(CASE WHEN current_stage_id IS NOT NULL THEN 1 ELSE 0 END) as pending,
@@ -89,7 +124,8 @@ class Dashboard extends Component
         ]);
 
         // TRC Schedule — records with date_scheduled set (filled after TRC Scheduling stage submission)
-        $trcSchedule = Record::whereRaw("JSON_UNQUOTE(JSON_EXTRACT(data, '$.date_scheduled')) IS NOT NULL")
+        $trcSchedule = $this->getScopedRecordQuery()
+            ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(data, '$.date_scheduled')) IS NOT NULL")
             ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(data, '$.date_scheduled')) != ''")
             ->with(['module'])
             ->get()
@@ -97,8 +133,10 @@ class Dashboard extends Component
             ->sortBy(fn($r) => $r->data['date_scheduled'])
             ->values();
 
-        // Recent activity (last 10 history entries)
-        $recentActivity = RecordHistory::with(['user', 'record.module'])
+        // Recent activity (last 10 history entries, scoped to authorized records)
+        $scopedRecordIds = $this->getScopedRecordQuery()->pluck('id');
+        $recentActivity = RecordHistory::whereIn('record_id', $scopedRecordIds)
+            ->with(['user', 'record.module'])
             ->latest()
             ->limit(10)
             ->get();
@@ -114,3 +152,4 @@ class Dashboard extends Component
         ));
     }
 }
+
