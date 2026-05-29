@@ -20,22 +20,15 @@ import TextAlign from '@tiptap/extension-text-align'
 import * as Y from 'yjs'
 
 import { HocuspocusProvider } from '@hocuspocus/provider'
-import {
-  Document,
-  Packer,
-  Paragraph,
-  TextRun,
-  HeadingLevel,
-  AlignmentType,
-  ImageRun,
-  Table as DocxTable,
-  TableRow as DocxTableRow,
-  TableCell as DocxTableCell,
-  WidthType,
-  PageBreak as DocxPageBreak,
-  ShadingType,
-} from 'docx'
-import { saveAs } from 'file-saver'
+import { wordGradeExtensions } from './text-editor/extensions/index.js'
+import { computeTextCounts, countParagraphs, estimatePages, formatCounts } from './text-editor/features/counts.js'
+import { setupStyles } from './text-editor/features/styles.js'
+import { insertFootnote as insertFootnoteFeature, openFootnotePane, injectFootnoteCss } from './text-editor/features/footnotes.js'
+import { injectTrackChangesCss } from './text-editor/features/track-changes.js'
+import { getPageMap, getSectionsMap, readPageSetup, txn, TE_ORIGIN } from './text-editor/collab/yroots.js'
+// NOTE: `docx` + `file-saver` are heavy and only needed for DOCX export, so they
+// are dynamically imported inside _doExportDocx() (keeps them out of the main
+// bundle). See that method for the import.
 
 // Determine Hocuspocus WS URL
 const WS_URL = window.HOCUSPOCUS_URL || `ws://${window.location.hostname}:1234`
@@ -408,6 +401,9 @@ class TextEditorInstance {
     this.lastContent    = ''
     this.margins        = { top: 20, right: 20, bottom: 20, left: 20 }
     this.pageSize       = 'a4'
+    this.orientation    = 'portrait'
+    this.columns        = 1
+    this.suggestionMode = false
 
     // Expose instance on container so external code (commit hook, buttons) can sync
     container._teInstance = this
@@ -443,6 +439,8 @@ class TextEditorInstance {
             this.editor.commands.setContent(this.initialContent)
             Promise.resolve().then(() => { this._remoteUpdate = false })
           }
+          // Apply any collaboratively-stored page setup once state has synced.
+          this.loadPageSetup()
         },
       })
 
@@ -476,6 +474,13 @@ class TextEditorInstance {
       TableHeader,
       TableCell,
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
+      // Word-grade additive global-attribute extensions (must stay before the
+      // Collaboration push so y-prosemirror sees the final schema).
+      ...wordGradeExtensions({
+        ydoc: this.ydoc,
+        isSuggesting: () => this.suggestionMode,
+        getUser: () => ({ name: this.userName, color: this.userColor }),
+      }),
     ]
 
     if (!isNew && this.provider) {
@@ -493,6 +498,13 @@ class TextEditorInstance {
       extensions,
       editable: !this.readonly,
       content: isNew ? this.initialContent : '',
+      editorProps: {
+        attributes: {
+          role: 'textbox',
+          'aria-multiline': 'true',
+          'aria-label': 'Document editor',
+        },
+      },
       onCreate: ({ editor }) => {
         this.lastContent = editor.getText()
         if (isNew && this.initialContent) {
@@ -513,6 +525,10 @@ class TextEditorInstance {
     this.setupToolbar()
     this.setupBottomBar()
     this.setupComments(isNew)
+    setupStyles(this)
+    injectFootnoteCss(this)
+    injectTrackChangesCss(this)
+    this.loadPageSetup()
 
     this._reviewDoneHandler = (e) => {
       if (e.detail?.fieldSlug === this.fieldSlug) {
@@ -551,7 +567,7 @@ class TextEditorInstance {
         </div>
 
         <!-- Toolbar wrap (sticky) -->
-        <div class="te-toolbar-wrap">
+        <div class="te-toolbar-wrap" role="toolbar" aria-label="Formatting toolbar">
 
           <!-- Row 1: Text formatting -->
           <div class="te-toolbar-row">
@@ -682,10 +698,47 @@ class TextEditorInstance {
               <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="2" x2="8" y2="22"/><line x1="16" y1="2" x2="16" y2="22"/><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="17" x2="20" y2="17"/></svg>
               Margins
             </button>
+            <button type="button" data-cmd="print" title="Print Layout / Print" class="te-btn" style="font-size:11px;gap:4px;padding:5px 10px;display:inline-flex;align-items:center">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+              Print
+            </button>
+            <button type="button" data-cmd="exportPdf" title="Export to PDF (matches preview)" class="te-btn" style="font-size:11px;gap:4px;padding:5px 10px;display:inline-flex;align-items:center">PDF</button>
             <button type="button" data-cmd="fullscreen" title="Toggle fullscreen" class="te-btn te-fullscreen-btn">
               <svg class="te-icon-expand w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
               <svg class="te-icon-compress w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="10" y1="14" x2="3" y2="21"/><line x1="21" y1="3" x2="14" y2="10"/></svg>
             </button>
+          </div>
+
+          <!-- Row 3: Word-grade controls (styles, headings H4-H6, links, references, clear) -->
+          <div class="te-toolbar-row" style="border-top:1px solid #f0f0f0;padding-top:2px">
+            <select class="te-style-select te-select" title="Paragraph style" style="width:110px"><option value="">Styles</option></select>
+            <span class="te-divider"></span>
+            <button type="button" data-cmd="h4" title="Heading 4" class="te-btn" style="font-size:11px;font-weight:700;min-width:28px">H4</button>
+            <button type="button" data-cmd="h5" title="Heading 5" class="te-btn" style="font-size:11px;font-weight:700;min-width:28px">H5</button>
+            <button type="button" data-cmd="h6" title="Heading 6" class="te-btn" style="font-size:11px;font-weight:700;min-width:28px">H6</button>
+            <span class="te-divider"></span>
+            <button type="button" data-cmd="link" title="Insert / edit link (Ctrl+K)" class="te-btn">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            </button>
+            <button type="button" data-cmd="bookmark" title="Insert bookmark" class="te-btn" style="font-size:11px;padding:4px 8px">Bookmark</button>
+            <button type="button" data-cmd="crossRef" title="Insert cross-reference" class="te-btn" style="font-size:11px;padding:4px 8px">Cross-ref</button>
+            <span class="te-divider"></span>
+            <button type="button" data-cmd="find" title="Find &amp; replace (Ctrl+F)" class="te-btn">
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            </button>
+            <span class="te-divider"></span>
+            <button type="button" data-cmd="footnote" title="Insert footnote" class="te-btn" style="font-size:11px;padding:4px 8px">Footnote</button>
+            <button type="button" data-cmd="endnote" title="Insert endnote" class="te-btn" style="font-size:11px;padding:4px 8px">Endnote</button>
+            <button type="button" data-cmd="footnotePane" title="Show footnotes" class="te-btn" style="font-size:11px;padding:4px 8px">Notes</button>
+            <span class="te-divider"></span>
+            <button type="button" data-cmd="sectionBreak" title="Insert section break (next page)" class="te-btn" style="font-size:11px;padding:4px 8px">Section</button>
+            <button type="button" data-cmd="columnBreak" title="Insert column break" class="te-btn" style="font-size:11px;padding:4px 8px">Col break</button>
+            <span class="te-divider"></span>
+            <button type="button" data-cmd="trackChanges" title="Toggle suggestion mode (track changes)" class="te-btn" style="font-size:11px;padding:4px 8px">Suggest</button>
+            <button type="button" data-cmd="acceptChanges" title="Accept all suggestions" class="te-btn" style="font-size:11px;padding:4px 8px">✓ All</button>
+            <button type="button" data-cmd="rejectChanges" title="Reject all suggestions" class="te-btn" style="font-size:11px;padding:4px 8px">✕ All</button>
+            <span class="te-divider"></span>
+            <button type="button" data-cmd="clearFormat" title="Clear formatting" class="te-btn" style="font-size:11px;padding:4px 8px">Clear</button>
           </div>
 
           <!-- Table context bar (hidden until cursor is inside a table) -->
@@ -814,6 +867,17 @@ class TextEditorInstance {
           <option value="legal">Legal (816 × 1344 px)</option>
           <option value="auto">Auto (fill container)</option>
         </select>
+        <p style="font-size:11px;font-weight:600;color:#374151;margin:0 0 8px">Orientation</p>
+        <select class="te-orientation-select" style="width:100%;border:1px solid #d1d5db;border-radius:4px;padding:4px 6px;font-size:12px;color:#374151;background:white;margin-bottom:12px;box-sizing:border-box">
+          <option value="portrait">Portrait</option>
+          <option value="landscape">Landscape</option>
+        </select>
+        <p style="font-size:11px;font-weight:600;color:#374151;margin:0 0 8px">Columns</p>
+        <select class="te-columns-select" style="width:100%;border:1px solid #d1d5db;border-radius:4px;padding:4px 6px;font-size:12px;color:#374151;background:white;margin-bottom:12px;box-sizing:border-box">
+          <option value="1">One</option>
+          <option value="2">Two</option>
+          <option value="3">Three</option>
+        </select>
         <p style="font-size:11px;font-weight:600;color:#374151;margin:0 0 10px">Page Margins (px)</p>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
           <label style="font-size:11px;color:#6b7280;display:block">Top<br>
@@ -863,6 +927,8 @@ class TextEditorInstance {
     this.tableContextBar  = this.container.querySelector('.te-table-context-bar')
     this.lineNumbersGutter = this.container.querySelector('.te-line-numbers-gutter')
     this.pageSizeSelect   = this.pageSetupDropdown?.querySelector('.te-page-size-select')
+    this.orientationSelect = this.pageSetupDropdown?.querySelector('.te-orientation-select')
+    this.columnsSelect    = this.pageSetupDropdown?.querySelector('.te-columns-select')
     this.fontFamilySelect = this.container.querySelector('.te-font-family')
     this.fontSizeSelect   = this.container.querySelector('.te-font-size')
     this.imageInput       = this.container.querySelector('.te-image-input')
@@ -884,6 +950,11 @@ class TextEditorInstance {
           min-width:28px; min-height:28px;
         }
         .te-btn:hover { background:#f3f4f6; color:#111827; }
+        /* Visible keyboard focus for accessibility */
+        .te-btn:focus-visible, .te-select:focus-visible, .te-page .ProseMirror:focus-visible {
+          outline: 2px solid #6366f1; outline-offset: 1px;
+        }
+        .te-page .ProseMirror:focus { outline: none; }
         .te-btn.is-active { background:#ede9fe; color:#6d28d9; }
         .te-btn:disabled { opacity:0.4; cursor:not-allowed; pointer-events:none; }
         .te-action-btn {
@@ -1264,9 +1335,24 @@ class TextEditorInstance {
           case 'pageBreak':      c.setPageBreak().run(); break
           case 'unsetColor':     c.unsetColor().run(); break
           case 'unsetHighlight': c.unsetHighlight().run(); break
-          case 'h1': c.toggleHeading({ level: 1 }).run(); break
-          case 'h2': c.toggleHeading({ level: 2 }).run(); break
-          case 'h3': c.toggleHeading({ level: 3 }).run(); break
+          case 'h4': c.toggleHeading({ level: 4 }).run(); break
+          case 'h5': c.toggleHeading({ level: 5 }).run(); break
+          case 'h6': c.toggleHeading({ level: 6 }).run(); break
+          case 'link':         this.promptLink(); break
+          case 'bookmark':     this.promptBookmark(); break
+          case 'crossRef':     this.promptCrossRef(); break
+          case 'clearFormat':  c.clearFormatting().run(); break
+          case 'find':         this.openFind(false); break
+          case 'sectionBreak': this.insertSectionBreak(); break
+          case 'columnBreak':  c.setColumnBreak().run(); break
+          case 'footnote':     insertFootnoteFeature(this, 'footnote'); break
+          case 'endnote':      insertFootnoteFeature(this, 'endnote'); break
+          case 'footnotePane': openFootnotePane(this); break
+          case 'print':        this.openPrintLayout(); break
+          case 'exportPdf':    this.exportToPdf(); break
+          case 'trackChanges': this.toggleSuggestionMode(); break
+          case 'acceptChanges': c.acceptAllSuggestions().run(); this.announce('All suggestions accepted'); break
+          case 'rejectChanges': c.rejectAllSuggestions().run(); this.announce('All suggestions rejected'); break
           case 'table':        this.toggleTablePicker(btn); break
           case 'pageSetup':    this.togglePageSetup(btn); break
           case 'sourceToggle': this.toggleSourceView(); break
@@ -1280,7 +1366,7 @@ class TextEditorInstance {
           case 'mergeCells':   c.mergeCells().run(); break
           case 'splitCell':    c.splitCell().run(); break
         }
-        if (!['table', 'pageSetup', 'image', 'sourceToggle'].includes(cmd)) {
+        if (!['table', 'pageSetup', 'image', 'sourceToggle', 'find', 'print', 'exportPdf'].includes(cmd)) {
           this.updateToolbarState()
         }
       })
@@ -1368,6 +1454,27 @@ class TextEditorInstance {
       this.pageSizeSelect.addEventListener('change', () => {
         this.pageSize = this.pageSizeSelect.value
         this.applyPageSize()
+        this.persistPageSetup()
+      })
+    }
+
+    // Page setup — orientation select
+    if (this.orientationSelect) {
+      this.orientationSelect.value = this.orientation
+      this.orientationSelect.addEventListener('change', () => {
+        this.orientation = this.orientationSelect.value
+        this.applyPageSize()
+        this.persistPageSetup()
+      })
+    }
+
+    // Page setup — columns select
+    if (this.columnsSelect) {
+      this.columnsSelect.value = String(this.columns)
+      this.columnsSelect.addEventListener('change', () => {
+        this.columns = parseInt(this.columnsSelect.value, 10) || 1
+        this.applyColumns()
+        this.persistPageSetup()
       })
     }
 
@@ -1379,6 +1486,7 @@ class TextEditorInstance {
           const val  = Math.max(0, Math.min(300, parseInt(input.value, 10) || 0))
           this.margins[side] = val
           this.applyMargins()
+          this.persistPageSetup()
         })
       })
 
@@ -1406,6 +1514,15 @@ class TextEditorInstance {
           this.pageSetupDropdown.style.display = 'none'
         }
       }
+    })
+
+    // Word-style shortcuts that need UI: find (Ctrl+F), replace (Ctrl+H), link (Ctrl+K).
+    this.container.addEventListener('keydown', (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return
+      const k = e.key.toLowerCase()
+      if (k === 'f')      { e.preventDefault(); this.openFind(false) }
+      else if (k === 'h') { e.preventDefault(); this.openFind(true) }
+      else if (k === 'k') { e.preventDefault(); this.promptLink() }
     })
 
     this.editor.on('selectionUpdate', () => this.updateToolbarState())
@@ -1437,6 +1554,10 @@ class TextEditorInstance {
       alignCenter:  e.isActive({ textAlign: 'center' }),
       alignRight:   e.isActive({ textAlign: 'right' }),
       alignJustify: e.isActive({ textAlign: 'justify' }),
+      h4:           e.isActive('heading', { level: 4 }),
+      h5:           e.isActive('heading', { level: 5 }),
+      h6:           e.isActive('heading', { level: 6 }),
+      link:         e.isActive('link'),
     }
     toolbarWrap.querySelectorAll('[data-cmd]').forEach(btn => {
       btn.classList.toggle('is-active', !!states[btn.dataset.cmd])
@@ -1459,6 +1580,58 @@ class TextEditorInstance {
 
     // Show/hide table context bar
     this.tableContextBar?.classList.toggle('hidden', !e.isActive('table'))
+  }
+
+  // Insert/edit a hyperlink on the current selection (Word Ctrl+K).
+  promptLink() {
+    const prev = this.editor.getAttributes('link').href || ''
+    const url = window.prompt('Link URL (leave empty to remove):', prev)
+    if (url === null) return // cancelled
+    const chain = this.editor.chain().focus().extendMarkRange('link')
+    if (url.trim() === '') chain.unsetLink().run()
+    else chain.setLink({ href: url.trim() }).run()
+    this.updateToolbarState()
+  }
+
+  // Insert a named bookmark anchor at the cursor.
+  promptBookmark() {
+    const name = window.prompt('Bookmark name:')
+    if (!name || !name.trim()) return
+    this.editor.chain().focus().insertBookmark(name.trim()).run()
+  }
+
+  // Insert a cross-reference that links to an existing bookmark.
+  promptCrossRef() {
+    const target = window.prompt('Cross-reference to bookmark named:')
+    if (!target || !target.trim()) return
+    const label = window.prompt('Display text:', target.trim()) || target.trim()
+    this.editor.chain().focus().insertCrossReference({ target: target.trim(), label }).run()
+  }
+
+  // Toggle per-user suggestion (track-changes) mode.
+  toggleSuggestionMode() {
+    this.suggestionMode = !this.suggestionMode
+    const shell = this.container.querySelector('.te-shell')
+    shell?.classList.toggle('te-suggesting', this.suggestionMode)
+    const btn = this.container.querySelector('[data-cmd="trackChanges"]')
+    btn?.classList.toggle('is-active', this.suggestionMode)
+    this.announce(this.suggestionMode ? 'Suggestion mode on' : 'Suggestion mode off')
+  }
+
+  // Polite screen-reader announcement (track changes / comments).
+  announce(message) {
+    if (!this._liveRegion) {
+      const r = document.createElement('div')
+      r.setAttribute('aria-live', 'polite')
+      r.setAttribute('role', 'status')
+      r.className = 'sr-only te-live-region'
+      r.style.cssText = 'position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap'
+      this.container.appendChild(r)
+      this._liveRegion = r
+    }
+    this._liveRegion.textContent = ''
+    // Re-set on next tick so repeated identical messages are still announced.
+    requestAnimationFrame(() => { this._liveRegion.textContent = message })
   }
 
   setupBottomBar() {
@@ -1531,8 +1704,33 @@ class TextEditorInstance {
   updateWordCount() {
     if (!this.wordCountEl || !this.editor) return
     const text = this.editor.getText()
-    const words = text.trim() ? text.trim().split(/\s+/).length : 0
-    this.wordCountEl.textContent = `${words} word${words !== 1 ? 's' : ''}`
+    const { words, chars } = computeTextCounts(text)
+    const paras = countParagraphs(this.editor.state.doc)
+    const prose = this.container.querySelector('.ProseMirror')
+    const pages = estimatePages(prose?.scrollHeight, this.pageSize)
+    this.wordCountEl.textContent = formatCounts({ words, chars, paras, pages })
+  }
+
+  // Lazily open the find / replace panel (pulls in prosemirror-search on demand).
+  openFind(replace = false) {
+    if (this.readonly) return
+    import('./text-editor/features/find-replace.js')
+      .then(({ openFindReplace }) => openFindReplace(this, { replace }))
+      .catch((err) => console.error('Failed to load find/replace', err))
+  }
+
+  // Lazily open the paginated Print Layout preview (pulls in Paged.js on demand).
+  openPrintLayout() {
+    import('./text-editor/print/paged-runner.js')
+      .then(({ openPrintPreview }) => openPrintPreview(this))
+      .catch((err) => console.error('Failed to load print pipeline', err))
+  }
+
+  // Lazily export to PDF via the native print path (same artifacts as preview).
+  exportToPdf() {
+    import('./text-editor/print/paged-runner.js')
+      .then(({ exportPdf }) => exportPdf(this))
+      .catch((err) => console.error('Failed to load print pipeline', err))
   }
 
   syncToLivewire(html) {
@@ -1631,6 +1829,19 @@ class TextEditorInstance {
     requestAnimationFrame(() => this.updateLineNumbers())
   }
 
+  // Page dimensions for the current size + orientation (px).
+  _orientedDims() {
+    const sizes = {
+      a4:     { width: 794, height: 1123 },
+      letter: { width: 816, height: 1056 },
+      legal:  { width: 816, height: 1344 },
+    }
+    const s = sizes[this.pageSize] || sizes.a4
+    return this.orientation === 'landscape'
+      ? { width: s.height, height: s.width }
+      : { ...s }
+  }
+
   applyPageLines() {
     const page = this.container.querySelector('.te-page')
     if (!page) return
@@ -1640,8 +1851,7 @@ class TextEditorInstance {
       return
     }
 
-    const sizes = { a4: 1123, letter: 1056, legal: 1344 }
-    const pageH = sizes[this.pageSize] || sizes.a4
+    const pageH = this._orientedDims().height
 
     // Draw a subtle horizontal rule at every page-height interval
     // The line sits 2px before the interval boundary and is 2px tall
@@ -1661,12 +1871,6 @@ class TextEditorInstance {
     const outerWrap = this.container.querySelector('.te-outer-wrap')
     if (!page || !pageRow || !outerWrap) return
 
-    const sizes = {
-      a4:     { width: 794,  height: 1123 },
-      letter: { width: 816,  height: 1056 },
-      legal:  { width: 816,  height: 1344 },
-    }
-
     // Fixed gutter: line-numbers-gutter (36px)
     const GUTTER = 36
 
@@ -1679,7 +1883,7 @@ class TextEditorInstance {
       pageRow.style.margin  = ''
       outerWrap.style.minHeight = ''
     } else {
-      const s = sizes[this.pageSize] || sizes.a4
+      const s = this._orientedDims()
       const rowWidth = GUTTER + s.width
 
       page.classList.remove('te-page-auto')
@@ -1694,8 +1898,74 @@ class TextEditorInstance {
       outerWrap.style.minHeight = (s.height + 64) + 'px'
     }
 
+    this.applyColumns()
     this.applyPageLines()
     requestAnimationFrame(() => this.updateLineNumbers())
+  }
+
+  // Render multi-column layout on the prose area (1/2/3 columns).
+  applyColumns() {
+    const prose = this.container.querySelector('.ProseMirror')
+    if (!prose) return
+    const n = Math.max(1, parseInt(this.columns, 10) || 1)
+    if (n > 1) {
+      prose.style.columnCount = String(n)
+      prose.style.columnGap = '24px'
+      prose.style.columnRule = '1px solid #e5e7eb'
+    } else {
+      prose.style.columnCount = ''
+      prose.style.columnGap = ''
+      prose.style.columnRule = ''
+    }
+  }
+
+  // Read collaboratively-stored page setup from te:page and apply it on screen.
+  loadPageSetup() {
+    if (!this.ydoc) return
+    const setup = readPageSetup(this.ydoc)
+    if (setup.size) this.pageSize = setup.size
+    if (setup.orientation) this.orientation = setup.orientation
+    if (setup.columns != null) this.columns = setup.columns
+    if (setup.margins) this.margins = { ...this.margins, ...setup.margins }
+    // Reflect into the controls if present.
+    if (this.pageSizeSelect) this.pageSizeSelect.value = this.pageSize
+    if (this.orientationSelect) this.orientationSelect.value = this.orientation
+    if (this.columnsSelect) this.columnsSelect.value = String(this.columns)
+    this.pageSetupDropdown?.querySelectorAll('.te-margin-input').forEach((inp) => {
+      const v = this.margins[inp.dataset.side]
+      if (v != null) inp.value = v
+    })
+    this.applyPageSize()
+    this.applyMargins()
+  }
+
+  // Persist the current page setup to te:page (collaborative + feeds print).
+  persistPageSetup() {
+    if (!this.ydoc) return
+    txn(this.ydoc, TE_ORIGIN.PAGE, (d) => {
+      const map = getPageMap(d)
+      map.set('size', this.pageSize)
+      map.set('orientation', this.orientation)
+      map.set('columns', this.columns)
+      map.set('margins', { ...this.margins })
+    })
+  }
+
+  // Insert a section break with a fresh id and seed its default config.
+  insertSectionBreak() {
+    const sectionId = generateUUID()
+    if (this.ydoc) {
+      txn(this.ydoc, TE_ORIGIN.SECTIONS, (d) => {
+        getSectionsMap(d).set(sectionId, {
+          size: this.pageSize,
+          orientation: this.orientation,
+          columns: this.columns,
+          margins: { ...this.margins },
+          breakType: 'nextPage',
+        })
+      })
+    }
+    this.editor.chain().focus().setSectionBreak({ sectionId, breakType: 'nextPage' }).run()
   }
 
   updateLineNumbers() {
@@ -1947,6 +2217,25 @@ class TextEditorInstance {
     }
   }
 
+  async submitReply(commentId, body) {
+    try {
+      const res = await fetch(`/api/text-editor/${this.recordId}/${this.fieldSlug}/comments/${commentId}/reply`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.token}`,
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({ body }),
+      })
+      if (!res.ok) throw new Error('Failed to save reply')
+      await this.loadComments()
+      this.announce('Reply added')
+    } catch {
+      alert('Could not post reply. Please try again.')
+    }
+  }
+
   async loadComments() {
     if (!this.commentsList || this.recordId === 'new') return
 
@@ -1984,8 +2273,37 @@ class TextEditorInstance {
             </button>
           </div>
           <p class="mt-1.5 text-gray-400 font-medium">${this.escHtml(c.user_name)} · ${new Date(c.created_at).toLocaleString()}</p>
+          ${(c.replies || []).map(r => `
+            <div class="te-comment-reply" style="margin:6px 0 0 12px;border-left:2px solid #e5e7eb;padding-left:8px">
+              <p class="text-gray-800 leading-snug">${this.escHtml(r.body)}</p>
+              <p class="text-gray-400">${this.escHtml(r.user_name)} · ${new Date(r.created_at).toLocaleString()}</p>
+            </div>`).join('')}
+          <div class="te-reply-box" style="margin-top:6px;display:flex;gap:4px">
+            <input type="text" class="te-reply-input" placeholder="Reply…" data-comment-id="${c.comment_id}" style="flex:1;border:1px solid #e5e7eb;border-radius:4px;padding:3px 6px;font-size:11px">
+            <button type="button" class="te-reply-send te-btn" data-comment-id="${c.comment_id}" style="font-size:11px;padding:2px 8px">Send</button>
+          </div>
         </div>
       `).join('')
+
+      this.commentsList.querySelectorAll('.te-reply-input').forEach(inp => {
+        inp.addEventListener('click', (e) => e.stopPropagation())
+        inp.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault(); e.stopPropagation()
+            const body = inp.value.trim()
+            if (body) this.submitReply(inp.dataset.commentId, body)
+          }
+        })
+      })
+      this.commentsList.querySelectorAll('.te-reply-send').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation()
+          const id = btn.dataset.commentId
+          const input = this.commentsList.querySelector(`.te-reply-input[data-comment-id="${id}"]`)
+          const body = input?.value.trim()
+          if (body) this.submitReply(id, body)
+        })
+      })
 
       this.commentsList.querySelectorAll('.te-resolve-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -2058,6 +2376,14 @@ class TextEditorInstance {
   }
 
   async _doExportDocx() {
+    // Lazily load the heavy DOCX toolchain only when the user actually exports.
+    const {
+      Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, ImageRun,
+      Table: DocxTable, TableRow: DocxTableRow, TableCell: DocxTableCell,
+      WidthType, PageBreak: DocxPageBreak, ShadingType,
+    } = await import('docx')
+    const { saveAs } = await import('file-saver')
+
     const json = this.editor.getJSON()
     console.warn('[DOCX] editor JSON (first 3 nodes):', JSON.stringify(json.content?.slice(0, 3), null, 2))
 

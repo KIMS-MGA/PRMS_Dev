@@ -7,6 +7,7 @@ use App\Models\WorkflowStage;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class TextEditorController extends Controller
 {
@@ -99,13 +100,15 @@ class TextEditorController extends Controller
     {
         $this->authorizeRecordAccess($request, $record);
 
-        $comments = DB::table('text_editor_comments')
+        $rows = DB::table('text_editor_comments')
             ->join('users', 'text_editor_comments.user_id', '=', 'users.id')
             ->where('text_editor_comments.record_id', $record->id)
             ->where('text_editor_comments.field_slug', $fieldSlug)
             ->whereNull('text_editor_comments.resolved_at')
             ->select(
+                'text_editor_comments.id',
                 'text_editor_comments.comment_id',
+                'text_editor_comments.parent_id',
                 'text_editor_comments.quoted_text',
                 'text_editor_comments.body',
                 'text_editor_comments.created_at',
@@ -114,7 +117,56 @@ class TextEditorController extends Controller
             ->orderBy('text_editor_comments.created_at')
             ->get();
 
+        // Nest replies (parent_id set) under their root comment.
+        $byParent = $rows->whereNotNull('parent_id')->groupBy('parent_id');
+        $comments = $rows->whereNull('parent_id')->values()->map(function ($c) use ($byParent) {
+            $c->replies = ($byParent->get($c->id) ?? collect())->values();
+            return $c;
+        });
+
         return response()->json($comments);
+    }
+
+    /**
+     * Add a threaded reply to an existing inline comment.
+     */
+    public function storeReply(Request $request, Record $record, string $fieldSlug, string $commentId)
+    {
+        $this->authorizeRecordAccess($request, $record);
+
+        $request->validate([
+            'body' => 'required|string|max:5000',
+        ]);
+
+        $root = DB::table('text_editor_comments')
+            ->where('record_id', $record->id)
+            ->where('field_slug', $fieldSlug)
+            ->where('comment_id', $commentId)
+            ->whereNull('parent_id')
+            ->first();
+
+        if (!$root) abort(404);
+
+        $uuid = (string) Str::uuid();
+        DB::table('text_editor_comments')->insert([
+            'record_id'   => $record->id,
+            'field_slug'  => $fieldSlug,
+            'comment_id'  => $uuid,
+            'parent_id'   => $root->id,
+            'user_id'     => $request->user()->id,
+            'quoted_text' => '',
+            'body'        => $request->body,
+            'created_at'  => now(),
+            'updated_at'  => now(),
+        ]);
+
+        return response()->json([
+            'comment_id' => $uuid,
+            'parent'     => $commentId,
+            'body'       => $request->body,
+            'user_name'  => $request->user()->name,
+            'created_at' => now()->toDateTimeString(),
+        ], 201);
     }
 
     /**
@@ -173,11 +225,25 @@ class TextEditorController extends Controller
     {
         $this->authorizeRecordAccess($request, $record);
 
+        $root = DB::table('text_editor_comments')
+            ->where('record_id', $record->id)
+            ->where('field_slug', $fieldSlug)
+            ->where('comment_id', $commentId)
+            ->first();
+
         DB::table('text_editor_comments')
             ->where('record_id', $record->id)
             ->where('field_slug', $fieldSlug)
             ->where('comment_id', $commentId)
             ->update(['resolved_at' => now(), 'updated_at' => now()]);
+
+        // Resolve the thread's replies alongside the root so none are orphaned.
+        if ($root) {
+            DB::table('text_editor_comments')
+                ->where('parent_id', $root->id)
+                ->whereNull('resolved_at')
+                ->update(['resolved_at' => now(), 'updated_at' => now()]);
+        }
 
         return response()->json(['ok' => true]);
     }

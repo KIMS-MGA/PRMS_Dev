@@ -23,6 +23,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/text-editor/{record}/{fieldSlug}/review-status', [TextEditorController::class, 'getReviewStatus']);
     Route::get('/text-editor/{record}/{fieldSlug}/comments', [TextEditorController::class, 'getComments']);
     Route::post('/text-editor/{record}/{fieldSlug}/comments', [TextEditorController::class, 'storeComment']);
+    Route::post('/text-editor/{record}/{fieldSlug}/comments/{commentId}/reply', [TextEditorController::class, 'storeReply']);
     Route::delete('/text-editor/{record}/{fieldSlug}/comments/{commentId}', [TextEditorController::class, 'resolveComment']);
     Route::post('/text-editor/{record}/{fieldSlug}/image', [TextEditorController::class, 'storeImage']);
 });
