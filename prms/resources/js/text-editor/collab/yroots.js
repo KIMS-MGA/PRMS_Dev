@@ -46,7 +46,7 @@ export const DEFAULT_PAGE_SETUP = Object.freeze({
   width: null,           // px, only when size === 'custom'
   height: null,          // px, only when size === 'custom'
   orientation: 'portrait',
-  margins: { top: 96, right: 96, bottom: 96, left: 96 }, // px (1in @96dpi)
+  margins: { top: 50, right: 50, bottom: 50, left: 50 }, // px
   gutter: 0,
   numbering: { start: 1, format: 'decimal', restart: false },
   header: { firstDifferent: false, oddEvenDifferent: false },

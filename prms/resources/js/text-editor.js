@@ -23,7 +23,7 @@ import { HocuspocusProvider } from '@hocuspocus/provider'
 import { wordGradeExtensions } from './text-editor/extensions/index.js'
 import { computeTextCounts, countParagraphs, estimatePages, formatCounts } from './text-editor/features/counts.js'
 import { setupStyles } from './text-editor/features/styles.js'
-import { insertFootnote as insertFootnoteFeature, openFootnotePane, injectFootnoteCss } from './text-editor/features/footnotes.js'
+import { injectFootnoteCss } from './text-editor/features/footnotes.js'
 import { injectTrackChangesCss } from './text-editor/features/track-changes.js'
 import { getPageMap, getSectionsMap, readPageSetup, txn, TE_ORIGIN } from './text-editor/collab/yroots.js'
 // NOTE: `docx` + `file-saver` are heavy and only needed for DOCX export, so they
@@ -399,7 +399,7 @@ class TextEditorInstance {
     this.initialContent = container._teContent || container._teTemplate || ''
     this.debounceTimer  = null
     this.lastContent    = ''
-    this.margins        = { top: 20, right: 20, bottom: 20, left: 20 }
+    this.margins        = { top: 50, right: 50, bottom: 50, left: 50 }
     this.pageSize       = 'a4'
     this.orientation    = 'portrait'
     this.columns        = 1
@@ -698,11 +698,7 @@ class TextEditorInstance {
               <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="2" x2="8" y2="22"/><line x1="16" y1="2" x2="16" y2="22"/><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="17" x2="20" y2="17"/></svg>
               Margins
             </button>
-            <button type="button" data-cmd="print" title="Print Layout / Print" class="te-btn" style="font-size:11px;gap:4px;padding:5px 10px;display:inline-flex;align-items:center">
-              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-              Print
-            </button>
-            <button type="button" data-cmd="exportPdf" title="Export to PDF (matches preview)" class="te-btn" style="font-size:11px;gap:4px;padding:5px 10px;display:inline-flex;align-items:center">PDF</button>
+            <button type="button" data-cmd="exportPdf" title="Print / Save as PDF" class="te-btn" style="font-size:11px;padding:5px 10px">Print</button>
             <button type="button" data-cmd="fullscreen" title="Toggle fullscreen" class="te-btn te-fullscreen-btn">
               <svg class="te-icon-expand w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
               <svg class="te-icon-compress w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="10" y1="14" x2="3" y2="21"/><line x1="21" y1="3" x2="14" y2="10"/></svg>
@@ -720,19 +716,9 @@ class TextEditorInstance {
             <button type="button" data-cmd="link" title="Insert / edit link (Ctrl+K)" class="te-btn">
               <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
             </button>
-            <button type="button" data-cmd="bookmark" title="Insert bookmark" class="te-btn" style="font-size:11px;padding:4px 8px">Bookmark</button>
-            <button type="button" data-cmd="crossRef" title="Insert cross-reference" class="te-btn" style="font-size:11px;padding:4px 8px">Cross-ref</button>
-            <span class="te-divider"></span>
             <button type="button" data-cmd="find" title="Find &amp; replace (Ctrl+F)" class="te-btn">
               <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             </button>
-            <span class="te-divider"></span>
-            <button type="button" data-cmd="footnote" title="Insert footnote" class="te-btn" style="font-size:11px;padding:4px 8px">Footnote</button>
-            <button type="button" data-cmd="endnote" title="Insert endnote" class="te-btn" style="font-size:11px;padding:4px 8px">Endnote</button>
-            <button type="button" data-cmd="footnotePane" title="Show footnotes" class="te-btn" style="font-size:11px;padding:4px 8px">Notes</button>
-            <span class="te-divider"></span>
-            <button type="button" data-cmd="sectionBreak" title="Insert section break (next page)" class="te-btn" style="font-size:11px;padding:4px 8px">Section</button>
-            <button type="button" data-cmd="columnBreak" title="Insert column break" class="te-btn" style="font-size:11px;padding:4px 8px">Col break</button>
             <span class="te-divider"></span>
             <button type="button" data-cmd="trackChanges" title="Toggle suggestion mode (track changes)" class="te-btn" style="font-size:11px;padding:4px 8px">Suggest</button>
             <button type="button" data-cmd="acceptChanges" title="Accept all suggestions" class="te-btn" style="font-size:11px;padding:4px 8px">✓ All</button>
@@ -881,16 +867,16 @@ class TextEditorInstance {
         <p style="font-size:11px;font-weight:600;color:#374151;margin:0 0 10px">Page Margins (px)</p>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
           <label style="font-size:11px;color:#6b7280;display:block">Top<br>
-            <input type="number" class="te-margin-input" data-side="top" min="0" max="300" value="20" style="width:100%;border:1px solid #d1d5db;border-radius:4px;padding:4px 6px;font-size:12px;margin-top:3px;box-sizing:border-box">
+            <input type="number" class="te-margin-input" data-side="top" min="0" max="300" value="50" style="width:100%;border:1px solid #d1d5db;border-radius:4px;padding:4px 6px;font-size:12px;margin-top:3px;box-sizing:border-box">
           </label>
           <label style="font-size:11px;color:#6b7280;display:block">Right<br>
-            <input type="number" class="te-margin-input" data-side="right" min="0" max="300" value="20" style="width:100%;border:1px solid #d1d5db;border-radius:4px;padding:4px 6px;font-size:12px;margin-top:3px;box-sizing:border-box">
+            <input type="number" class="te-margin-input" data-side="right" min="0" max="300" value="50" style="width:100%;border:1px solid #d1d5db;border-radius:4px;padding:4px 6px;font-size:12px;margin-top:3px;box-sizing:border-box">
           </label>
           <label style="font-size:11px;color:#6b7280;display:block">Bottom<br>
-            <input type="number" class="te-margin-input" data-side="bottom" min="0" max="300" value="20" style="width:100%;border:1px solid #d1d5db;border-radius:4px;padding:4px 6px;font-size:12px;margin-top:3px;box-sizing:border-box">
+            <input type="number" class="te-margin-input" data-side="bottom" min="0" max="300" value="50" style="width:100%;border:1px solid #d1d5db;border-radius:4px;padding:4px 6px;font-size:12px;margin-top:3px;box-sizing:border-box">
           </label>
           <label style="font-size:11px;color:#6b7280;display:block">Left<br>
-            <input type="number" class="te-margin-input" data-side="left" min="0" max="300" value="20" style="width:100%;border:1px solid #d1d5db;border-radius:4px;padding:4px 6px;font-size:12px;margin-top:3px;box-sizing:border-box">
+            <input type="number" class="te-margin-input" data-side="left" min="0" max="300" value="50" style="width:100%;border:1px solid #d1d5db;border-radius:4px;padding:4px 6px;font-size:12px;margin-top:3px;box-sizing:border-box">
           </label>
         </div>
         <button type="button" class="te-margin-reset" style="font-size:11px;color:#6366f1;background:none;border:none;cursor:pointer;padding:0">Reset to Default</button>
@@ -1339,15 +1325,8 @@ class TextEditorInstance {
           case 'h5': c.toggleHeading({ level: 5 }).run(); break
           case 'h6': c.toggleHeading({ level: 6 }).run(); break
           case 'link':         this.promptLink(); break
-          case 'bookmark':     this.promptBookmark(); break
-          case 'crossRef':     this.promptCrossRef(); break
           case 'clearFormat':  c.clearFormatting().run(); break
           case 'find':         this.openFind(false); break
-          case 'sectionBreak': this.insertSectionBreak(); break
-          case 'columnBreak':  c.setColumnBreak().run(); break
-          case 'footnote':     insertFootnoteFeature(this, 'footnote'); break
-          case 'endnote':      insertFootnoteFeature(this, 'endnote'); break
-          case 'footnotePane': openFootnotePane(this); break
           case 'print':        this.openPrintLayout(); break
           case 'exportPdf':    this.exportToPdf(); break
           case 'trackChanges': this.toggleSuggestionMode(); break
@@ -1491,7 +1470,7 @@ class TextEditorInstance {
       })
 
       this.pageSetupDropdown.querySelector('.te-margin-reset')?.addEventListener('click', () => {
-        this.margins = { top: 20, right: 20, bottom: 20, left: 20 }
+        this.margins = { top: 50, right: 50, bottom: 50, left: 50 }
         this.applyMargins()
         this.pageSetupDropdown.querySelectorAll('.te-margin-input').forEach(inp => {
           inp.value = 20

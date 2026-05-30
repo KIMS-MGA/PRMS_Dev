@@ -97,8 +97,7 @@ function marginBoxes(header, footer, fmt, ctx) {
 function pageRule(name, setup, ctx) {
   const sel = name ? `@page ${name}` : '@page'
   const fmt = setup.numbering?.format || 'decimal'
-  // Default footer shows the page number centered when nothing is configured.
-  const footer = setup.footer || { center: '{page}' }
+  const footer = setup.footer || null
   const header = setup.header || null
   const boxes = marginBoxes(header, footer, fmt, ctx)
   return `${sel} {

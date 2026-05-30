@@ -35,7 +35,7 @@ export function buildPrintArtifacts(instance) {
   const { page, sections, styles, footnotes } = gatherState(instance)
   const css = buildPageCss(page, sections, styles, ctxLiterals(instance))
   const body = serializeForPrint(instance.editor.getHTML(), { footnotes, document })
-  return { css, body }
+  return { css, body, margins: page.margins || { top: 50, right: 50, bottom: 50, left: 50 } }
 }
 
 /** Open a paginated print-preview overlay; returns a handle with print(). */
@@ -77,13 +77,17 @@ export async function openPrintPreview(instance) {
 }
 
 /** Print (and thus Save-as-PDF) the same body+css via an isolated iframe. */
-export function printArtifacts(css, body) {
+export function printArtifacts(css, body, margins = { top: 50, right: 50, bottom: 50, left: 50 }) {
+  const m = margins
+  // Setting @page margin to 0 removes the browser's native print headers/footers
+  // (title, URL, date, time, page number). Content spacing is handled via body padding.
+  const suppressCss = `@page { margin: 0 !important; } body { margin: 0; padding: ${m.top}px ${m.right}px ${m.bottom}px ${m.left}px; box-sizing: border-box; }`
   const iframe = document.createElement('iframe')
   iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0'
   document.body.appendChild(iframe)
   const doc = iframe.contentDocument
   doc.open()
-  doc.write(`<!doctype html><html><head><meta charset="utf-8"><style>${css}</style></head><body>${body}</body></html>`)
+  doc.write(`<!doctype html><html><head><meta charset="utf-8"><style>${suppressCss}${css}</style></head><body>${body}</body></html>`)
   doc.close()
 
   const run = () => {
@@ -97,6 +101,6 @@ export function printArtifacts(css, body) {
 
 /** Export to PDF == open the native print dialog on the print artifacts. */
 export async function exportPdf(instance) {
-  const { css, body } = buildPrintArtifacts(instance)
-  printArtifacts(css, body)
+  const { css, body, margins } = buildPrintArtifacts(instance)
+  printArtifacts(css, body, margins)
 }
