@@ -506,7 +506,7 @@ class TextEditorInstance {
         },
       },
       onCreate: ({ editor }) => {
-        this.lastContent = editor.getText()
+        this.lastContent = editor.getText({ blockSeparator: '\n' })
         if (isNew && this.initialContent) {
           this.syncToLivewire(editor.getHTML())
         }
@@ -967,7 +967,9 @@ class TextEditorInstance {
         .te-ctx-btn:hover { background:#e5e7eb; }
         .te-ctx-btn-danger:hover { background:#fee2e2; color:#dc2626; }
 
-        /* Editor body: page + right-side panels */
+        /* Editor body: page + right-side panels. Fixed 600px viewport; the page
+           area scrolls inside it (fullscreen swaps 600px for flex:1 — see the
+           .te-fullscreen rules below). */
         .te-editor-body {
           display: flex;
           flex-direction: row;
@@ -978,6 +980,7 @@ class TextEditorInstance {
         .te-editor-body > .te-outer-wrap {
           flex: 1;
           min-width: 0;
+          min-height: 0;
           overflow-y: auto;
         }
         .te-side-panels {
@@ -1133,7 +1136,8 @@ class TextEditorInstance {
         }
 
         /* ProseMirror inside page */
-        .te-page .ProseMirror { outline: none; min-height: 400px; }
+        /* padding-bottom gives the last line room to scroll fully into view. */
+        .te-page .ProseMirror { outline: none; min-height: 400px; padding-bottom: 56px; }
         /* Lists */
         .te-page .ProseMirror ul { list-style-type: disc; padding-left: 1.5em; margin: 0.25em 0; }
         .te-page .ProseMirror ol { list-style-type: decimal; padding-left: 1.5em; margin: 0.25em 0; }
@@ -1270,6 +1274,13 @@ class TextEditorInstance {
           flex: 1;
           overflow-y: auto;
           min-height: 0;
+        }
+        /* Source view replaces the (flex:1) editor body, so it must grow too —
+           otherwise it sits at min-height:400px and leaves a gap below. */
+        .te-shell.te-fullscreen .te-source-textarea {
+          flex: 1 1 auto;
+          min-height: 0;
+          resize: none;
         }
         .te-shell.te-fullscreen .te-side-panels {
           height: 100%;
@@ -1873,8 +1884,10 @@ class TextEditorInstance {
       pageRow.style.maxWidth = rowWidth + 'px'
       pageRow.style.margin   = '0 auto'
 
-      // outer wrap tall enough to show the full page plus breathing room
-      outerWrap.style.minHeight = (s.height + 64) + 'px'
+      // The scroll container must stay at its CSS height (600px / fullscreen
+      // flex) and scroll the page inside it — never grow to the page height, or
+      // the body's overflow:hidden clips the bottom and you can't reach the end.
+      outerWrap.style.minHeight = ''
     }
 
     this.applyColumns()
@@ -1947,6 +1960,56 @@ class TextEditorInstance {
     this.editor.chain().focus().setSectionBreak({ sectionId, breakType: 'nextPage' }).run()
   }
 
+  // Vertical line-boxes (viewport client coords) for one top-level block. Each
+  // entry is one *visual* line — wrapped text yields multiple boxes. Shared by
+  // the gutter and the history line-number lookup so the two always agree.
+  _blockVisualLines(block) {
+    let rects = []
+    try {
+      const range = document.createRange()
+      range.selectNodeContents(block)
+      rects = Array.from(range.getClientRects()).filter(r => r.width > 0 && r.height > 0)
+    } catch { /* selectNodeContents can fail on void nodes */ }
+
+    const lines = []
+    if (rects.length) {
+      rects.forEach(r => {
+        const hit = lines.find(l => Math.abs(l.top - r.top) <= 3)
+        if (hit) { hit.top = Math.min(hit.top, r.top); hit.bottom = Math.max(hit.bottom, r.bottom) }
+        else     { lines.push({ top: r.top, bottom: r.bottom }) }
+      })
+      lines.sort((a, b) => a.top - b.top)
+    } else {
+      // Empty paragraph / atom block (image, hr, page break) → counts as one line.
+      const br = block.getBoundingClientRect()
+      lines.push({ top: br.top, bottom: br.bottom })
+    }
+    return lines
+  }
+
+  // 1-based gutter line number whose box contains (or is the closest above) the
+  // given viewport Y — counted from the very top of the document.
+  visualLineAtY(clientY) {
+    const prose = this.container.querySelector('.ProseMirror')
+    if (!prose) return null
+    let lineNo = 0
+    for (const block of prose.querySelectorAll(':scope > *')) {
+      for (const l of this._blockVisualLines(block)) {
+        lineNo += 1
+        if (clientY <= l.bottom + 1) return lineNo
+      }
+    }
+    return lineNo || 1
+  }
+
+  // The gutter line number the caret currently sits on (matches what the user sees).
+  currentVisualLine(editor) {
+    try {
+      const c = editor.view.coordsAtPos(editor.state.selection.head)
+      return this.visualLineAtY((c.top + c.bottom) / 2)
+    } catch { return null }
+  }
+
   updateLineNumbers() {
     const gutter = this.lineNumbersGutter
     const prose  = this.container.querySelector('.ProseMirror')
@@ -1958,14 +2021,18 @@ class TextEditorInstance {
     const blocks = prose.querySelectorAll(':scope > *')
     gutter.innerHTML = ''
 
-    blocks.forEach((block, i) => {
-      const rect = block.getBoundingClientRect()
-      const top  = rect.top - gutterRect.top + rect.height / 2
-      if (top < 0 || top > gutterRect.height + 20) return
-      const span = document.createElement('span')
-      span.textContent = i + 1
-      span.style.top = top + 'px'
-      gutter.appendChild(span)
+    // Render every line's number at a stable offset within the gutter. The
+    // gutter shares the page's scroll context, so the offsets stay correct as
+    // the page (or the fullscreen inner area) scrolls — no per-scroll recompute.
+    let lineNo = 0
+    blocks.forEach(block => {
+      this._blockVisualLines(block).forEach(l => {
+        lineNo += 1
+        const span = document.createElement('span')
+        span.textContent = lineNo
+        span.style.top = ((l.top + l.bottom) / 2 - gutterRect.top) + 'px'
+        gutter.appendChild(span)
+      })
     })
 
     // Watch page resize to keep numbers aligned
@@ -2009,8 +2076,11 @@ class TextEditorInstance {
 
   logChange(editor) {
     clearTimeout(this.debounceTimer)
+    // Capture the caret's gutter line now — it matches what the user sees, and
+    // layout (hence the visual line) may shift before the debounced POST fires.
+    const editLine = this.currentVisualLine(editor)
     this.debounceTimer = setTimeout(() => {
-      const current = editor.getText()
+      const current = editor.getText({ blockSeparator: '\n' })
       if (current !== this.lastContent && this.lastContent !== '') {
         const action = current.length > this.lastContent.length ? 'insert' : 'delete'
 
@@ -2035,7 +2105,7 @@ class TextEditorInstance {
             'Authorization': `Bearer ${this.token}`,
             'Accept': 'application/json',
           },
-          body: JSON.stringify({ action, content: snippet }),
+          body: JSON.stringify({ action, content: snippet, line: editLine }),
         }).catch(() => {})
       }
       this.lastContent = current
@@ -2063,6 +2133,7 @@ class TextEditorInstance {
             <span style="font-size:11px;font-weight:600;padding:1px 5px;border-radius:3px;${entry.action === 'insert' ? 'background:#dcfce7;color:#16a34a;' : 'background:#fee2e2;color:#dc2626;'}">
               ${entry.action === 'insert' ? 'inserted' : 'deleted'}
             </span>
+            ${entry.line_number ? `<span style="font-size:10px;font-weight:600;color:#6366f1;background:#eef2ff;padding:1px 5px;border-radius:3px;">Line ${entry.line_number}</span>` : ''}
             <span style="font-size:11px;color:#6b7280;flex:1;text-align:right;">
               ${entry.user_name} · ${new Date(entry.created_at).toLocaleTimeString()}
             </span>

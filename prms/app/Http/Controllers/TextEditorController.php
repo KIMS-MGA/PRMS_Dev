@@ -79,15 +79,17 @@ class TextEditorController extends Controller
         $request->validate([
             'action'  => 'required|in:insert,delete',
             'content' => 'required|string|min:1|max:10000',
+            'line'    => 'nullable|integer|min:1',
         ]);
 
         DB::table('text_editor_histories')->insert([
-            'record_id'  => $record->id,
-            'field_slug' => $fieldSlug,
-            'user_id'    => $request->user()->id,
-            'action'     => $request->action,
-            'content'    => $request->content,
-            'created_at' => now(),
+            'record_id'   => $record->id,
+            'field_slug'  => $fieldSlug,
+            'user_id'     => $request->user()->id,
+            'action'      => $request->action,
+            'content'     => $request->content,
+            'line_number' => $request->line,
+            'created_at'  => now(),
         ]);
 
         return response()->json(['ok' => true]);
