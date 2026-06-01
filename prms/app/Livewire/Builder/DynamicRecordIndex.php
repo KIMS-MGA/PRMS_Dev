@@ -57,6 +57,12 @@ class DynamicRecordIndex extends Component
             $this->myRecordsOnly = true;
         }
 
+        // Bypassed for TRC Secretariat and super admin
+        if (auth()->user()->hasRole('TRC Secretariat') || auth()->user()->hasRole('super admin')) {
+            $this->myRecordsOnly = false;
+        }
+
+
         // Init per-field filters
         foreach ($this->module->fields as $field) {
             $this->fieldFilters[$field->slug] = '';
@@ -157,8 +163,9 @@ class DynamicRecordIndex extends Component
             $query->whereDate('created_at', '<=', $this->dateTo);
         }
 
-        // My records only
-        if ($this->myRecordsOnly) {
+        // My records only (enforced securely: privileged roles bypass this filter)
+        $isPrivileged = auth()->user()->hasRole('TRC Secretariat') || auth()->user()->hasRole('super admin');
+        if (($this->myRecordsOnly || $this->module->my_records_only) && !$isPrivileged) {
             $query->where('created_by', auth()->id());
         }
 

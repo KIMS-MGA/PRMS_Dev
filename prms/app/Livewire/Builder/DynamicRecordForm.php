@@ -183,7 +183,13 @@ class DynamicRecordForm extends Component
         $currentStage = $this->record->currentStage;
         $isFinal = !$currentStage || $currentStage->is_final_approval;
 
-        $approvalService->approve($this->record, $this->module, auth()->user(), $this->approvalComment);
+        $advanced = $approvalService->approve($this->record, $this->module, auth()->user(), $this->approvalComment);
+
+        if (!$advanced) {
+            $this->approvalComment = '';
+            session()->flash('message', 'Review submitted. Waiting for other reviewers.');
+            return;
+        }
 
         if (!$isFinal) {
             // Find next stage to set local status correctly
@@ -225,7 +231,13 @@ class DynamicRecordForm extends Component
                 $targetStage = \App\Models\WorkflowStage::find($branch['stage_id']);
                 $label = $branch['label'];
 
-                $approvalService->forwardToBranch($this->record, $this->module, auth()->user(), $index, $this->approvalComment);
+                $advanced = $approvalService->forwardToBranch($this->record, $this->module, auth()->user(), $index, $this->approvalComment);
+
+                if (!$advanced) {
+                    $this->approvalComment = '';
+                    session()->flash('message', "Review forwarded ({$label}). Waiting for other reviewers.");
+                    return;
+                }
 
                 $this->status = $targetStage?->default_status ?? 'Under Review';
                 $this->approvalComment = '';

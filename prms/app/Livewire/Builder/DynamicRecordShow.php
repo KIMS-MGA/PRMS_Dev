@@ -78,7 +78,7 @@ class DynamicRecordShow extends Component
         }
     }
 
-    public function approve()
+    public function approve(bool $autoAdvance = false)
     {
         $this->authorizeApprovalAction();
         if (!$this->validateRequiredStageFields()) return;
@@ -99,6 +99,26 @@ class DynamicRecordShow extends Component
             'action'       => 'approved',
             'changes_json' => $this->approvalComment ? ['comment' => $this->approvalComment] : null,
         ]);
+
+        if (!$autoAdvance && $currentStage && $currentStage->stage_type === 'review') {
+            $reviewerCount = 0;
+            if ($currentStage->approver_role_id) {
+                $role = Role::find($currentStage->approver_role_id);
+                if ($role) $reviewerCount = User::role($role->name)->count();
+            }
+
+            $doneCount = RecordApproval::where('record_id', $this->record->id)
+                ->where('stage_id', $currentStage->id)
+                ->where('action', 'approved')
+                ->distinct('user_id')
+                ->count('user_id');
+
+            if ($reviewerCount > 0 && $doneCount < $reviewerCount) {
+                $this->approvalComment = '';
+                $this->dispatch('notify', type: 'success', message: 'Review submitted. Waiting for other reviewers.');
+                return;
+            }
+        }
 
         $targetModuleId = $this->module->source_module_id ?? $this->module->id;
         $isFinal = !$currentStage || $currentStage->is_final_approval;
@@ -127,7 +147,7 @@ class DynamicRecordShow extends Component
         $this->dispatch('notify', type: 'success', message: 'Record approved successfully.');
     }
 
-    public function forwardToBranch($index)
+    public function forwardToBranch($index, bool $autoAdvance = false)
     {
         $this->authorizeApprovalAction();
         if (!$this->validateRequiredStageFields()) return;
@@ -158,6 +178,26 @@ class DynamicRecordShow extends Component
             'action'       => 'forwarded',
             'changes_json' => ['path' => $label, 'to_stage' => $targetStage?->name],
         ]);
+
+        if (!$autoAdvance && $currentStage && $currentStage->stage_type === 'review') {
+            $reviewerCount = 0;
+            if ($currentStage->approver_role_id) {
+                $role = Role::find($currentStage->approver_role_id);
+                if ($role) $reviewerCount = User::role($role->name)->count();
+            }
+
+            $doneCount = RecordApproval::where('record_id', $this->record->id)
+                ->where('stage_id', $currentStage->id)
+                ->where('action', 'forwarded')
+                ->distinct('user_id')
+                ->count('user_id');
+
+            if ($reviewerCount > 0 && $doneCount < $reviewerCount) {
+                $this->approvalComment = '';
+                $this->dispatch('notify', type: 'success', message: "Review forwarded ({$label}). Waiting for other reviewers.");
+                return;
+            }
+        }
 
         $this->record->update([
             'status'           => $targetStage?->default_status ?? 'Under Review',
@@ -316,7 +356,7 @@ class DynamicRecordShow extends Component
             ->count();
 
         if ($reviewerCount > 0 && $doneCount >= $reviewerCount) {
-            $this->approve();
+            $this->approve(true);
             return;
         }
 

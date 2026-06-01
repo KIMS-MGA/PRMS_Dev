@@ -70,7 +70,7 @@ class RecordApprovalService
      * @param string|null $comment
      * @return void
      */
-    public function approve(Record $record, Module $module, User $user, ?string $comment = null): void
+    public function approve(Record $record, Module $module, User $user, ?string $comment = null, bool $autoAdvance = false): bool
     {
         $currentStage = $record->currentStage;
 
@@ -89,6 +89,24 @@ class RecordApprovalService
             'changes_json' => $comment ? ['comment' => $comment] : null,
         ]);
 
+        if (!$autoAdvance && $currentStage && $currentStage->stage_type === 'review') {
+            $reviewerCount = 0;
+            if ($currentStage->approver_role_id) {
+                $role = Role::find($currentStage->approver_role_id);
+                if ($role) $reviewerCount = User::role($role->name)->count();
+            }
+
+            $doneCount = RecordApproval::where('record_id', $record->id)
+                ->where('stage_id', $currentStage->id)
+                ->where('action', 'approved')
+                ->distinct('user_id')
+                ->count('user_id');
+
+            if ($reviewerCount > 0 && $doneCount < $reviewerCount) {
+                return false;
+            }
+        }
+
         $targetModuleId = $module->source_module_id ?? $module->id;
         $isFinal = !$currentStage || $currentStage->is_final_approval;
 
@@ -105,7 +123,7 @@ class RecordApprovalService
                     'stage_entered_at' => now()
                 ]);
                 $this->notifyStageUsers($record, $module, $nextStage, "A record in {$module->name} has advanced and requires your approval.");
-                return;
+                return true;
             }
         }
 
@@ -114,6 +132,8 @@ class RecordApprovalService
         // Notify submitter
         $submitter = User::find($record->created_by);
         $submitter?->notify(new DynamicNotification("Your record in {$module->name} has been completed.", $record->id, $module->slug));
+
+        return true;
     }
 
     /**
@@ -126,7 +146,7 @@ class RecordApprovalService
      * @param string|null $comment
      * @return void
      */
-    public function forwardToBranch(Record $record, Module $module, User $user, int $branchIndex, ?string $comment = null): void
+    public function forwardToBranch(Record $record, Module $module, User $user, int $branchIndex, ?string $comment = null, bool $autoAdvance = false): bool
     {
         $currentStage = $record->currentStage;
         $branches = $currentStage?->branches_json ?? [];
@@ -154,6 +174,24 @@ class RecordApprovalService
             'changes_json' => ['path' => $label, 'to_stage' => $targetStage?->name],
         ]);
 
+        if (!$autoAdvance && $currentStage && $currentStage->stage_type === 'review') {
+            $reviewerCount = 0;
+            if ($currentStage->approver_role_id) {
+                $role = Role::find($currentStage->approver_role_id);
+                if ($role) $reviewerCount = User::role($role->name)->count();
+            }
+
+            $doneCount = RecordApproval::where('record_id', $record->id)
+                ->where('stage_id', $currentStage->id)
+                ->where('action', 'forwarded')
+                ->distinct('user_id')
+                ->count('user_id');
+
+            if ($reviewerCount > 0 && $doneCount < $reviewerCount) {
+                return false;
+            }
+        }
+
         $record->update([
             'status'           => $targetStage?->default_status ?? 'Under Review',
             'current_stage_id' => $targetStage?->id,
@@ -163,6 +201,8 @@ class RecordApprovalService
         if ($targetStage) {
             $this->notifyStageUsers($record, $module, $targetStage, "A record in {$module->name} has been forwarded ({$label}) and requires your action.");
         }
+
+        return true;
     }
 
     /**
@@ -249,7 +289,7 @@ class RecordApprovalService
 
         if ($reviewerCount > 0 && $doneCount >= $reviewerCount) {
             // All reviewers done — auto-advance to next stage
-            $this->approve($record, $module, $user);
+            $this->approve($record, $module, $user, null, true);
             return true;
         }
 
