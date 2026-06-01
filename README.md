@@ -13,6 +13,7 @@
 | 1 | `95c9042` | May 28, 2026 | Refactoring of the DynamicRecordForm Livewire component into Service classes |
 | 2 | `d830d069` | May 28, 2026 | Restrict stats count based on the account |
 | 3 | `6cabead` | Jun 1, 2026 | docs: replace default Laravel README with PRMS project documentation |
+| 4 | `0cb9941` | Jun 1, 2026 | dEncapsulating all notification processing logic into dedicated NotificationController and referencing its method in routes/web.php. Clean up routes/web.php removed three inline closures and mapped to NotificationController. |
 
 ---
 
