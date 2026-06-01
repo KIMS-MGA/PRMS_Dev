@@ -1,0 +1,23 @@
+Archive:  ../_out.docx
+   creating: word/
+   creating: word/_rels/
+  inflating: word/_rels/document.xml.rels  
+  inflating: word/document.xml       
+  inflating: word/styles.xml         
+   creating: docProps/
+  inflating: docProps/core.xml       
+  inflating: word/numbering.xml      
+   creating: _rels/
+  inflating: _rels/.rels             
+  inflating: [Content_Types].xml     
+  inflating: docProps/custom.xml     
+  inflating: docProps/app.xml        
+  inflating: word/footnotes.xml      
+  inflating: word/_rels/footnotes.xml.rels  
+  inflating: word/endnotes.xml       
+  inflating: word/_rels/endnotes.xml.rels  
+  inflating: word/settings.xml       
+  inflating: word/comments.xml       
+  inflating: word/_rels/comments.xml.rels  
+  inflating: word/fontTable.xml      
+  inflating: word/_rels/fontTable.xml.rels  

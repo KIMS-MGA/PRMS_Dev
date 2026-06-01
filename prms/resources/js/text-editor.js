@@ -2360,6 +2360,7 @@ class TextEditorInstance {
       Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, ImageRun,
       Table: DocxTable, TableRow: DocxTableRow, TableCell: DocxTableCell,
       WidthType, PageBreak: DocxPageBreak, ShadingType,
+      BorderStyle, TableLayoutType, LevelFormat, PageOrientation,
     } = await import('docx')
     const { saveAs } = await import('file-saver')
 
@@ -2476,13 +2477,85 @@ class TextEditorInstance {
       })
     }
 
+    // 1px ≈ 15 twips (1in = 96px = 1440 twips)
+    const PX_TO_DXA = 15
+
+    // TipTap textAlign → docx alignment
+    const alignFor = (attrs) => {
+      switch (attrs?.textAlign) {
+        case 'center':  return AlignmentType.CENTER
+        case 'right':   return AlignmentType.RIGHT
+        case 'justify': return AlignmentType.JUSTIFIED
+        case 'left':    return AlignmentType.LEFT
+        default:        return undefined
+      }
+    }
+
+    // Image align attr → paragraph alignment (block = centered, floats → side)
+    const imgAlignFor = (attrs) => {
+      switch (attrs?.align) {
+        case 'block':       return AlignmentType.CENTER
+        case 'float-right': return AlignmentType.RIGHT
+        case 'float-left':  return AlignmentType.LEFT
+        default:            return undefined
+      }
+    }
+
+    // Shared paragraph/heading options: line spacing, alignment, indent.
+    // Editor indents 2em per level (~32px → 480 twips).
+    const blockOpts = (attrs) => {
+      const opts = {}
+      if (attrs?.lineSpacing) opts.spacing = { line: Math.round(parseFloat(attrs.lineSpacing) * 240) }
+      const a = alignFor(attrs); if (a !== undefined) opts.alignment = a
+      const ind = attrs?.indent || 0; if (ind > 0) opts.indent = { left: ind * 480 }
+      return opts
+    }
+
+    // Ordered-list numbering: one concrete instance per top-level <ol> so each
+    // list restarts at 1. Built up during walk, attached to the Document below.
+    const numberingConfigs = []
+    let olCounter = 0
+    const renderList = (listNode, level, orderedRef) => {
+      const ordered = listNode.type === 'orderedList'
+      let ref = orderedRef
+      if (ordered && !ref) {
+        ref = `te-ol-${olCounter++}`
+        numberingConfigs.push({
+          reference: ref,
+          levels: [0, 1, 2, 3, 4, 5, 6, 7, 8].map(l => ({
+            level: l,
+            format: LevelFormat.DECIMAL,
+            text: `%${l + 1}.`,
+            alignment: AlignmentType.LEFT,
+            style: { paragraph: { indent: { left: (l + 1) * 720, hanging: 360 } } },
+          })),
+        })
+      }
+      for (const item of (listNode.content || [])) {        // listItem
+        for (const child of (item.content || [])) {
+          if (child.type === 'bulletList' || child.type === 'orderedList') {
+            renderList(child, level + 1, ref)
+          } else {
+            const runs = (child.content || []).map(n =>
+              n.type === 'text'  ? makeTextRun(n)
+              : n.type === 'image' ? makeImageRun(n.attrs?.src, n.attrs)
+              : new TextRun(''))
+            const spacing = child.attrs?.lineSpacing
+              ? { line: Math.round(parseFloat(child.attrs.lineSpacing) * 240) }
+              : undefined
+            children.push(new Paragraph(ordered
+              ? { spacing, numbering: { reference: ref, level }, children: runs }
+              : { spacing, bullet: { level }, children: runs }))
+          }
+        }
+      }
+    }
+
     const children = []
 
     const processNode = (node) => {
       if (node.type === 'paragraph') {
-        const spacing = node.attrs?.lineSpacing
-          ? { line: Math.round(parseFloat(node.attrs.lineSpacing) * 240) }
-          : undefined
+        const opts = blockOpts(node.attrs)
         // Inline images live inside paragraph nodes; docx requires ImageRun in its own Paragraph
         const segments = []
         let runs = []
@@ -2497,13 +2570,14 @@ class TextEditorInstance {
         if (runs.length) segments.push({ type: 'text', runs })
 
         if (!segments.length) {
-          children.push(new Paragraph({ children: [], spacing }))
+          children.push(new Paragraph({ ...opts, children: [] }))
         } else {
           for (const seg of segments) {
             if (seg.type === 'text') {
-              children.push(new Paragraph({ children: seg.runs, spacing }))
+              children.push(new Paragraph({ ...opts, children: seg.runs }))
             } else {
-              children.push(new Paragraph({ children: [makeImageRun(seg.src, seg.attrs)], spacing }))
+              const imgAlign = imgAlignFor(seg.attrs)
+              children.push(new Paragraph({ ...opts, alignment: imgAlign ?? opts.alignment, children: [makeImageRun(seg.src, seg.attrs)] }))
             }
           }
         }
@@ -2513,45 +2587,90 @@ class TextEditorInstance {
 
       } else if (node.type === 'heading') {
         const levelMap = { 1: HeadingLevel.HEADING_1, 2: HeadingLevel.HEADING_2, 3: HeadingLevel.HEADING_3 }
-        const spacing = node.attrs?.lineSpacing
-          ? { line: Math.round(parseFloat(node.attrs.lineSpacing) * 240) }
-          : undefined
+        const opts = blockOpts(node.attrs)
         const runs = (node.content || []).map(n => n.type === 'text' ? makeTextRun(n) : new TextRun(''))
-        children.push(new Paragraph({ heading: levelMap[node.attrs?.level] || HeadingLevel.HEADING_1, children: runs, spacing }))
+        children.push(new Paragraph({ heading: levelMap[node.attrs?.level] || HeadingLevel.HEADING_1, ...opts, children: runs }))
 
       } else if (node.type === 'bulletList' || node.type === 'orderedList') {
-        ;(node.content || []).forEach(item =>
-          (item.content || []).forEach(p => {
-            const runs = (p.content || []).map(n => n.type === 'text' ? makeTextRun(n) : new TextRun(''))
-            children.push(new Paragraph({ bullet: { level: 0 }, children: runs }))
-          })
-        )
+        renderList(node, 0)
 
       } else if (node.type === 'blockquote') {
         ;(node.content || []).forEach(p => processNode(p))
 
       } else if (node.type === 'image') {
-        children.push(new Paragraph({ children: [makeImageRun(node.attrs?.src, node.attrs)] }))
+        children.push(new Paragraph({ alignment: imgAlignFor(node.attrs), children: [makeImageRun(node.attrs?.src, node.attrs)] }))
 
       } else if (node.type === 'table') {
+        // On screen the table is width:100% of the page, columns sized in
+        // proportion to TipTap's `colwidth` attrs. Mirror that: fit the table to
+        // the page's content width and distribute columns by those proportions.
+        // (Using raw colwidth px as absolute widths makes the table a tiny sliver
+        // and crushes the text — which looks like missing content.)
+        const od = (typeof this._orientedDims === 'function') ? this._orientedDims() : { width: 794 }
+        const m2 = this.margins || { left: 0, right: 0 }
+        const contentPx  = Math.max(200, od.width - (m2.left || 0) - (m2.right || 0))
+        const contentDxa = Math.round(contentPx * PX_TO_DXA)
+
+        const firstRow = (node.content || [])[0]
+        const rawCols = []
+        for (const cell of (firstRow?.content || [])) {
+          const cw   = cell.attrs?.colwidth
+          const span = cell.attrs?.colspan || 1
+          for (let i = 0; i < span; i++) rawCols.push(Array.isArray(cw) ? (cw[i] || cw[0] || 0) : 0)
+        }
+        const nCols    = rawCols.length || 1
+        const totalRaw = rawCols.reduce((a, b) => a + b, 0)
+        const columnWidths = totalRaw > 0
+          ? rawCols.map(w => Math.max(360, Math.round((w / totalRaw) * contentDxa)))
+          : Array.from({ length: nCols }, () => Math.round(contentDxa / nCols))
+        const tableWidthDxa = columnWidths.reduce((a, b) => a + b, 0)
+
+        const edge = { style: BorderStyle.SINGLE, size: 4, color: '999999' }
+        const cellBorders = { top: edge, bottom: edge, left: edge, right: edge }
+
+        // Pull every paragraph/heading (even inside lists/blockquotes) out of the
+        // cell as its own docx Paragraph so no cell text is ever dropped.
+        const cellBlocks = (cell, isHeader) => {
+          const out = []
+          const walk = (blocks) => {
+            for (const b of (blocks || [])) {
+              if (b.type === 'paragraph' || b.type === 'heading') {
+                const runs = (b.content || []).map(n =>
+                  n.type === 'text'  ? makeTextRun(isHeader ? { ...n, marks: [...(n.marks || []), { type: 'bold' }] } : n)
+                  : n.type === 'image' ? makeImageRun(n.attrs?.src, n.attrs)
+                  : new TextRun(''))
+                out.push(new Paragraph({ ...blockOpts(b.attrs), children: runs.length ? runs : [new TextRun('')] }))
+              } else if (b.content) {
+                walk(b.content)
+              }
+            }
+          }
+          walk(cell.content)
+          return out.length ? out : [new Paragraph({ children: [new TextRun('')] })]
+        }
+
         const rows = (node.content || []).map(row =>
           new DocxTableRow({
-            children: (row.content || []).map(cell =>
-              new DocxTableCell({
-                children: (cell.content || []).flatMap(p => {
-                  if (p.type === 'paragraph') {
-                    const runs = (p.content || []).map(n =>
-                      n.type === 'text' ? new TextRun({ text: n.text || '' }) : new TextRun('')
-                    )
-                    return [new Paragraph({ children: runs })]
-                  }
-                  return [new Paragraph({ children: [new TextRun('')] })]
-                })
+            children: (row.content || []).map(cell => {
+              const isHeader = cell.type === 'tableHeader'
+              const colspan  = cell.attrs?.colspan || 1
+              const rowspan  = cell.attrs?.rowspan || 1
+              return new DocxTableCell({
+                children: cellBlocks(cell, isHeader),
+                columnSpan: colspan > 1 ? colspan : undefined,
+                rowSpan:    rowspan > 1 ? rowspan : undefined,
+                borders: cellBorders,
+                shading: isHeader ? { type: ShadingType.CLEAR, color: 'auto', fill: 'F3F4F6' } : undefined,
               })
-            )
+            })
           })
         )
-        children.push(new DocxTable({ rows }))
+        children.push(new DocxTable({
+          rows,
+          columnWidths,
+          layout: TableLayoutType.FIXED,
+          width: { size: tableWidthDxa, type: WidthType.DXA },
+        }))
       }
     }
 
@@ -2559,10 +2678,39 @@ class TextEditorInstance {
 
     if (!children.length) children.push(new Paragraph({ children: [new TextRun('')] }))
 
-    // Narrow margins: 0.5 inch = 720 twips on all sides
+    // Match the editor's page setup (size + orientation + margins) so the DOCX
+    // lays out like the on-screen page. Dimensions in twips (1in = 1440).
+    const PAGE_DIMS = {
+      a4:     { w: 11906, h: 16838 },
+      letter: { w: 12240, h: 15840 },
+      legal:  { w: 12240, h: 20160 },
+    }
+    let dims = PAGE_DIMS[this.pageSize] || PAGE_DIMS.a4
+    if (this.pageSize === 'custom') {
+      // Custom dimensions live in the Yjs page map (px), not on the instance.
+      const setup = readPageSetup(this.ydoc)
+      const wpx = parseFloat(setup.width), hpx = parseFloat(setup.height)
+      if (wpx > 0 && hpx > 0) dims = { w: Math.round(wpx * PX_TO_DXA), h: Math.round(hpx * PX_TO_DXA) }
+    }
+    const landscape = this.orientation === 'landscape'
+    const pw = landscape ? dims.h : dims.w
+    const ph = landscape ? dims.w : dims.h
+    const m  = this.margins || { top: 50, right: 50, bottom: 50, left: 50 }
+
     const doc = new Document({
+      ...(numberingConfigs.length ? { numbering: { config: numberingConfigs } } : {}),
       sections: [{
-        properties: { page: { margin: { top: 720, right: 720, bottom: 720, left: 720 } } },
+        properties: {
+          page: {
+            size: { width: pw, height: ph, orientation: landscape ? PageOrientation.LANDSCAPE : PageOrientation.PORTRAIT },
+            margin: {
+              top:    Math.round(m.top    * PX_TO_DXA),
+              right:  Math.round(m.right  * PX_TO_DXA),
+              bottom: Math.round(m.bottom * PX_TO_DXA),
+              left:   Math.round(m.left   * PX_TO_DXA),
+            },
+          },
+        },
         children,
       }]
     })
