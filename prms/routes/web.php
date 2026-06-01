@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Auth\SocialController;
 use App\Http\Controllers\DynamicRecordController;
+use App\Http\Controllers\NotificationController;
 use App\Livewire\Builder\ModuleIndex;
 use App\Livewire\Builder\ModuleForm;
 use App\Livewire\Builder\Dashboard;
@@ -63,27 +64,9 @@ Route::get('/notifications', NotificationCenter::class)
     ->name('builder.notifications');
 
 Route::middleware(['auth', 'verified'])->group(function () {
-    Route::post('/notifications/{id}/read', function ($id) {
-        auth()->user()->notifications()->where('id', $id)->update(['read_at' => now()]);
-        return response()->noContent();
-    })->name('notifications.markRead');
-
-    Route::get('/notifications/{id}/open', function ($id) {
-        $notif = auth()->user()->notifications()->where('id', $id)->first();
-        if ($notif) {
-            $notif->markAsRead();
-            $data = $notif->data;
-            if (!empty($data['record_id']) && !empty($data['module_slug'])) {
-                return redirect()->route('dynamic.show', ['moduleSlug' => $data['module_slug'], 'record' => $data['record_id']]);
-            }
-        }
-        return redirect()->route('builder.approval.queue');
-    })->name('notifications.open');
-
-    Route::post('/notifications/read-all', function () {
-        auth()->user()->unreadNotifications->markAsRead();
-        return back();
-    })->name('notifications.markAllRead');
+    Route::post('/notifications/{id}/read', [NotificationController::class, 'markRead'])->name('notifications.markRead');
+    Route::get('/notifications/{id}/open', [NotificationController::class, 'open'])->name('notifications.open');
+    Route::post('/notifications/read-all', [NotificationController::class, 'markAllRead'])->name('notifications.markAllRead');
 
     Route::get('/app/{moduleSlug}', DynamicRecordIndex::class)->name('dynamic.index');
     Route::get('/app/{moduleSlug}/create', DynamicRecordForm::class)->name('dynamic.create');
