@@ -2,7 +2,7 @@
 
 **Branch:** `general-refinement`
 **Author:** KIMS-MGA
-**Total Changes:** 14 files changed, 1,293 insertions(+), 425 deletions(-)
+**Total Changes:** 16 files changed, 1,311 insertions(+), 434 deletions(-)
 
 ---
 
@@ -20,6 +20,7 @@
 | 8 | `58b0ab0e` | Jun 1, 2026 | Update README.md |
 | 9 | `b4bc49ad` | Jun 1, 2026 | Prevent the workflow from advancing prematurely when multiple reviewers are assigned. |
 | 10 | `3f34a4b0` | Jun 1, 2026 | Merge branch 'general-refinement' (upstream updates) |
+| 11 | `1e35db1e` | Jun 2, 2026 | Implement Hocuspocus collaborative editing server and add dynamic record management UI components |
 
 ---
 
@@ -199,21 +200,55 @@ Merge commit synchronizing local branch with remote repository changes.
 
 ---
 
+## Commit 11 — `1e35db1e` | Jun 2, 2026
+
+### Feature: Hocuspocus Server Refinements and Dynamic Record UI Fixes
+
+**Files changed:**
+- `prms/.gitignore` — 10 lines added
+- `prms/hocuspocus/server.js` — 6 lines changed
+- `prms/resources/views/livewire/builder/dynamic-record-form.blade.php` — 1 line changed
+- `prms/resources/views/livewire/builder/dynamic-record-index.blade.php` — 1 line changed
+- `prms/resources/views/livewire/builder/dynamic-record-show.blade.php` — 1 line changed
+
+**What changed:**
+
+**Hocuspocus collaboration server (`hocuspocus/server.js`):**
+- Replaced `||` (logical OR) with `??` (nullish coalescing operator) for all environment variable defaults — more precise behavior since it only falls back when the value is `null` or `undefined`, not when it's an empty string.
+- Changed the default DB password fallback from `'secret'` to `''` (empty string) to avoid accidental default credentials in new environments.
+- Removed the hardcoded `'jea_'` default table prefix — `TABLE_PREFIX` now defaults to an empty string, fully driven by the `DB_PREFIX` env variable.
+
+**`.gitignore` additions:**
+- Added `**/node_modules` to catch nested `node_modules` directories (e.g., inside `hocuspocus/`).
+- Added `hocuspocus/package-lock.json` to keep the lock file out of version control.
+- Added glob patterns for temporary/debug scripts: `tmp_*.php`, `tmp_*.js`, `tmp_*.mjs`, `tmp_*.ts`.
+
+**Dynamic record UI fixes:**
+- **`dynamic-record-form.blade.php` / `dynamic-record-show.blade.php`**: `text_editor` field type now always renders with `md:col-span-2` (full width), regardless of whether `col_span` is set to `2` in the field configuration. Previously, only fields with `col_span = 2` got the wide layout — rich text editor fields were incorrectly rendered at half width.
+- **`dynamic-record-index.blade.php`**: Fixed value rendering for array-type field values (e.g., file attachment fields) in the index table. The display now:
+  1. Tries to extract `original_name` from each array item (for file objects).
+  2. Falls back to imploding the raw array values if no `original_name` key exists.
+  3. Falls back to `'-'` if the array is empty.
+
+---
+
 ## Summary of All Files Changed
 
 | File | Change |
 |---|---|
 | `README.md` | New — root project documentation file |
+| `prms/.gitignore` | Updated — added nested node_modules, Hocuspocus package-lock.json, and temp script glob patterns |
 | `prms/README.md` | New — custom PRMS project documentation file |
 | `prms/app/Http/Controllers/NotificationController.php` | New — encapsulating route notification handlers |
 | `prms/app/Livewire/Builder/Dashboard.php` | Updated — account-scoped stat queries |
-| `prms/app/Livewire/Builder/DynamicRecordForm.php` | Refactored — business logic delegated to services; handles reviewer completeness feedback |
-| `prms/app/Livewire/Builder/DynamicRecordIndex.php` | Updated — custom policies proposals role filtering and secure visibility checks |
-| `prms/app/Livewire/Builder/DynamicRecordShow.php` | Updated — added reviewer count verification to prevent premature workflow advancement |
+| `prms/app/Livewire/Builder/DynamicRecordForm.php` | Refactored — business logic delegated to services; handles reviewer completeness feedback; `text_editor` fields always full-width |
+| `prms/app/Livewire/Builder/DynamicRecordIndex.php` | Updated — custom policies proposals role filtering; array field values rendered correctly in index table |
+| `prms/app/Livewire/Builder/DynamicRecordShow.php` | Updated — reviewer count verification; `text_editor` fields always full-width |
 | `prms/app/Services/RecordApprovalService.php` | New — approval workflow logic; implements reviewer completeness checking |
 | `prms/app/Services/RecordCommentService.php` | New — comment creation/deletion |
 | `prms/app/Services/RecordSaveService.php` | New — record save and file upload logic |
 | `prms/app/Services/TokenMintingService.php` | New — editor token management |
+| `prms/hocuspocus/server.js` | Updated — refined env var defaults using nullish coalescing; removed hardcoded table prefix and default password |
 | `prms/phpunit.xml` | Updated — added unique testing compiled views path for concurrent local test runs |
 | `prms/public/storage/.gitignore` | New — gitignore for storage symlink |
 | `prms/routes/web.php` | Updated — removed three inline closures and mapped to NotificationController to maximize route caching performance |
