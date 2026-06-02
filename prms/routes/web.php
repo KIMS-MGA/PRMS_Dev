@@ -47,15 +47,23 @@ Route::get('/auth/google/redirect', [SocialController::class, 'redirect'])->name
 Route::get('/auth/google/callback', [SocialController::class, 'callback'])->name('google.callback');
 
 Route::middleware(['auth', 'verified'])->prefix('builder')->name('builder.')->group(function () {
-    Route::get('/modules', ModuleIndex::class)->name('modules.index');
-    Route::get('/modules/create', ModuleForm::class)->name('modules.create');
-    Route::get('/modules/{module}/edit', ModuleForm::class)->name('modules.edit');
+    // Operational routes — these components authorize per-record/permission internally,
+    // so non-super-admin roles (Reviewer, TRC Secretariat, etc.) must reach them.
     Route::get('/approval-queue', ApprovalQueue::class)->name('approval.queue');
     Route::get('/workflow-stages/{module}', WorkflowStageManager::class)->name('workflow.stages');
-    Route::get('/workflows/{module}', WorkflowManager::class)->name('workflow.manager');
-    Route::get('/audit', AuditLog::class)->name('audit');
-    Route::get('/webhooks', WebhookManager::class)->name('webhooks');
-    Route::get('/api-manager', ApiManager::class)->name('api.manager');
+
+    // Platform administration — super admin only (mirrors nav visibility & /admin/* routes).
+    // Closes broken-access-control: token minting, webhook creation (SSRF/exfil),
+    // module schema editing, and audit-log disclosure were previously reachable by any verified user.
+    Route::middleware('role:super admin')->group(function () {
+        Route::get('/modules', ModuleIndex::class)->name('modules.index');
+        Route::get('/modules/create', ModuleForm::class)->name('modules.create');
+        Route::get('/modules/{module}/edit', ModuleForm::class)->name('modules.edit');
+        Route::get('/workflows/{module}', WorkflowManager::class)->name('workflow.manager');
+        Route::get('/audit', AuditLog::class)->name('audit');
+        Route::get('/webhooks', WebhookManager::class)->name('webhooks');
+        Route::get('/api-manager', ApiManager::class)->name('api.manager');
+    });
 });
 
 Route::get('/notifications', NotificationCenter::class)

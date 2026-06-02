@@ -9,6 +9,31 @@ use Illuminate\Http\Request;
 
 class DynamicApiController extends Controller
 {
+    /**
+     * Build per-field validation rules from the module's field definitions.
+     * Adds type-appropriate rules so email/number/date/url/boolean fields cannot
+     * be stored with malformed data. Ambiguous types (select, user, phone,
+     * attachment) stay lenient to preserve backward compatibility with clients.
+     */
+    private function fieldRules($fields): array
+    {
+        $rules = [];
+        foreach ($fields as $field) {
+            $set = [$field->is_required ? 'required' : 'nullable'];
+            switch ($field->type) {
+                case 'email':        $set[] = 'email';   break;
+                case 'number':
+                case 'currency':     $set[] = 'numeric'; break;
+                case 'date':         $set[] = 'date';    break;
+                case 'url':          $set[] = 'url';     break;
+                case 'boolean':      $set[] = 'boolean'; break;
+                case 'multi_select': $set[] = 'array';   break;
+            }
+            $rules['data.' . $field->slug] = $set;
+        }
+        return $rules;
+    }
+
     private function checkAbility(Request $request, string $moduleSlug, string $action): void
     {
         if (!$request->user()->tokenCan("{$moduleSlug}:{$action}")) {
@@ -98,12 +123,7 @@ class DynamicApiController extends Controller
         $this->checkAbility($request, $moduleSlug, 'write');
         $module = Module::with('fields')->where('slug', $moduleSlug)->firstOrFail();
 
-        $rules = [];
-        foreach ($module->fields as $field) {
-            $rules['data.' . $field->slug] = $field->is_required ? 'required' : 'nullable';
-        }
-
-        $validated = $request->validate($rules);
+        $validated = $request->validate($this->fieldRules($module->fields));
 
         $record = Record::create([
             'module_id'  => $module->id,
@@ -130,12 +150,7 @@ class DynamicApiController extends Controller
         $module = Module::with('fields')->where('slug', $moduleSlug)->firstOrFail();
         $record = Record::where('module_id', $module->id)->findOrFail($recordId);
 
-        $rules = [];
-        foreach ($module->fields as $field) {
-            $rules['data.' . $field->slug] = $field->is_required ? 'required' : 'nullable';
-        }
-
-        $validated = $request->validate($rules);
+        $validated = $request->validate($this->fieldRules($module->fields));
 
         $record->update([
             'data'       => array_merge($record->data ?? [], $validated['data'] ?? []),

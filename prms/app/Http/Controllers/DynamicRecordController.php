@@ -7,6 +7,20 @@ use App\Models\Record;
 
 class DynamicRecordController extends Controller
 {
+    /**
+     * Neutralize spreadsheet formula (CSV/DDE) injection: a cell that begins
+     * with =, +, -, @, tab or CR is treated as a formula by Excel/Sheets.
+     * Prefixing a single quote forces it to render as literal text.
+     */
+    private function csvSafe($value): string
+    {
+        $value = (string) $value;
+        if ($value !== '' && in_array($value[0], ['=', '+', '-', '@', "\t", "\r"], true)) {
+            return "'" . $value;
+        }
+        return $value;
+    }
+
     public function exportCsv(string $moduleSlug)
     {
         $module = Module::with(['fields' => fn($q) => $q->orderBy('sort_order')])
@@ -36,7 +50,7 @@ class DynamicRecordController extends Controller
 
         $handle = fopen('php://temp', 'r+');
 
-        $headers = $fields->pluck('name')->toArray();
+        $headers = $fields->map(fn($f) => $this->csvSafe($f->name))->toArray();
         array_push($headers, 'Status', 'Stage', 'Created By', 'Created At');
         fputcsv($handle, $headers);
 
@@ -45,11 +59,11 @@ class DynamicRecordController extends Controller
             foreach ($fields as $field) {
                 $value = $record->data[$field->slug] ?? '';
                 if (is_array($value)) $value = implode(', ', $value);
-                $row[] = $value;
+                $row[] = $this->csvSafe($value);
             }
             $row[] = $record->status;
-            $row[] = $record->currentStage?->name ?? '';
-            $row[] = $record->creator?->name ?? '';
+            $row[] = $this->csvSafe($record->currentStage?->name ?? '');
+            $row[] = $this->csvSafe($record->creator?->name ?? '');
             $row[] = $record->created_at->format('Y-m-d H:i');
             fputcsv($handle, $row);
         }

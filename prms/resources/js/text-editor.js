@@ -403,6 +403,9 @@ class TextEditorInstance {
     this.pageSize       = 'a4'
     this.orientation    = 'portrait'
     this.columns        = 1
+    // On-screen page zoom (view only — never affects print/DOCX size). Per-field,
+    // per-browser preference; defaults to 100%.
+    this.zoom           = parseFloat(localStorage.getItem(`te-zoom-${this.fieldSlug}`)) || 1
     this.suggestionMode = false
 
     // Expose instance on container so external code (commit hook, buttons) can sync
@@ -800,6 +803,17 @@ class TextEditorInstance {
         <!-- Bottom bar -->
         <div class="te-bottom-bar flex flex-wrap items-center gap-3 px-4 py-2.5 border-t border-gray-100 bg-gray-50 text-xs text-gray-400">
           <span class="word-count">0 words</span>
+          <span class="flex items-center gap-1" title="On-screen zoom (does not change print/export size)">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+            <select class="te-zoom-select" style="border:1px solid #e5e7eb;border-radius:4px;padding:1px 4px;font-size:11px;color:#374151;background:white;cursor:pointer">
+              <option value="0.75">75%</option>
+              <option value="1">100%</option>
+              <option value="1.25">125%</option>
+              <option value="1.5">150%</option>
+              <option value="1.75">175%</option>
+              <option value="2">200%</option>
+            </select>
+          </span>
           <span class="flex-1"></span>
           <button type="button" class="history-toggle-btn te-action-btn hidden" title="Toggle edit history">
             <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -902,6 +916,7 @@ class TextEditorInstance {
     this.statusDot        = this.container.querySelector('.status-indicator')
     this.statusLabel      = this.container.querySelector('.status-label')
     this.wordCountEl      = this.container.querySelector('.word-count')
+    this.zoomSelect       = this.container.querySelector('.te-zoom-select')
     this.historyPanel     = this.container.querySelector('.history-panel')
     this.historyList      = this.container.querySelector('.history-list')
     this.historyToggle    = this.container.querySelector('.history-toggle-btn')
@@ -1647,7 +1662,24 @@ class TextEditorInstance {
 
     this.exportBtn?.addEventListener('click', () => this.exportDocx())
 
+    if (this.zoomSelect) {
+      this.zoomSelect.value = String(this.zoom)
+      this.zoomSelect.addEventListener('change', () => {
+        this.zoom = parseFloat(this.zoomSelect.value) || 1
+        try { localStorage.setItem(`te-zoom-${this.fieldSlug}`, String(this.zoom)) } catch {}
+        this.applyZoom()
+      })
+    }
+
     this._syncSidePanels = syncSidePanels
+  }
+
+  // Scale the on-screen page (view only). Applied to the whole page-row so the
+  // gutter and page scale together; print/DOCX use the unscaled page size.
+  applyZoom() {
+    const pageRow = this.container.querySelector('.te-page-row')
+    if (pageRow) pageRow.style.zoom = this.zoom
+    requestAnimationFrame(() => this.updateLineNumbers())
   }
 
   updateStatus(status) {
@@ -1682,12 +1714,12 @@ class TextEditorInstance {
     })
 
     this.presenceEl.innerHTML = users.slice(0, 5).map(u => `
-      <span title="${u.name}" style="
+      <span title="${this.escHtml(u.name)}" style="
         display:inline-flex; align-items:center; justify-content:center;
         width:24px; height:24px; border-radius:50%;
-        background:${u.color}; color:white; font-size:10px; font-weight:600;
+        background:${this.escHtml(u.color)}; color:white; font-size:10px; font-weight:600;
         border:2px solid white; margin-left:-4px;
-      ">${u.name.charAt(0).toUpperCase()}</span>
+      ">${this.escHtml(String(u.name ?? '?').charAt(0).toUpperCase())}</span>
     `).join('')
   }
 
@@ -1892,7 +1924,7 @@ class TextEditorInstance {
 
     this.applyColumns()
     this.applyPageLines()
-    requestAnimationFrame(() => this.updateLineNumbers())
+    this.applyZoom()
   }
 
   // Render multi-column layout on the prose area (1/2/3 columns).
@@ -2030,7 +2062,9 @@ class TextEditorInstance {
         lineNo += 1
         const span = document.createElement('span')
         span.textContent = lineNo
-        span.style.top = ((l.top + l.bottom) / 2 - gutterRect.top) + 'px'
+        // Divide by zoom: the gutter lives inside the zoomed page-row, so its
+        // local coordinates are pre-zoom while the measured offset is post-zoom.
+        span.style.top = (((l.top + l.bottom) / 2 - gutterRect.top) / this.zoom) + 'px'
         gutter.appendChild(span)
       })
     })
@@ -2135,11 +2169,11 @@ class TextEditorInstance {
             </span>
             ${entry.line_number ? `<span style="font-size:10px;font-weight:600;color:#6366f1;background:#eef2ff;padding:1px 5px;border-radius:3px;">Line ${entry.line_number}</span>` : ''}
             <span style="font-size:11px;color:#6b7280;flex:1;text-align:right;">
-              ${entry.user_name} · ${new Date(entry.created_at).toLocaleTimeString()}
+              ${this.escHtml(entry.user_name)} · ${new Date(entry.created_at).toLocaleTimeString()}
             </span>
           </div>
           <div style="font-size:11px;color:#374151;word-break:break-word;overflow-wrap:break-word;background:${entry.action === 'insert' ? '#f0fdf4' : '#fff1f2'};border-left:3px solid ${entry.action === 'insert' ? '#86efac' : '#fca5a5'};padding:4px 6px;border-radius:0 3px 3px 0;">
-            ${entry.content || '—'}
+            ${entry.content ? this.escHtml(entry.content) : '—'}
           </div>
         </div>
       `).join('')

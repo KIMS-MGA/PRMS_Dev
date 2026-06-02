@@ -71,11 +71,13 @@ class TextEditorController extends Controller
     }
 
     /**
-     * Store a history entry (called by Hocuspocus server or client).
-     * Requires a shared secret header for Hocuspocus server calls.
+     * Store a history entry (called by the authenticated editor client).
+     * The acting user (resolved via auth:sanctum) must have access to the record.
      */
     public function storeHistory(Request $request, Record $record, string $fieldSlug)
     {
+        $this->authorizeRecordAccess($request, $record);
+
         $request->validate([
             'action'  => 'required|in:insert,delete',
             'content' => 'required|string|min:1|max:10000',
@@ -176,6 +178,8 @@ class TextEditorController extends Controller
      */
     public function storeComment(Request $request, Record $record, string $fieldSlug)
     {
+        $this->authorizeRecordAccess($request, $record);
+
         $request->validate([
             'comment_id'  => 'required|uuid',
             'quoted_text' => 'required|string|max:500',
