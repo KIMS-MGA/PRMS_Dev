@@ -43,6 +43,9 @@ const server = Server.configure({
       const data = await res.json()
       return { user: data.user }
     } catch (e) {
+      if (e.message !== 'Unauthorized') {
+        console.error('[Hocuspocus onAuthenticate] Unexpected error:', e.message)
+      }
       throw new Error('Authentication failed')
     }
   },

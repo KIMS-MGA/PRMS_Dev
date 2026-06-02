@@ -32,6 +32,7 @@ class UserManagement extends Component
 
     public function loadData()
     {
+        // TODO: Add pagination for large user sets — currently loads all users unbounded
         $this->users = User::with('roles', 'permissions')->get();
         $this->modules = Module::orderBy('sort_order')->get();
         $this->roles = Role::where('name', '!=', 'super admin')->get();

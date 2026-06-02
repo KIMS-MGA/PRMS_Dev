@@ -45,12 +45,12 @@ class DynamicRecordController extends Controller
             foreach ($fields as $field) {
                 $value = $record->data[$field->slug] ?? '';
                 if (is_array($value)) $value = implode(', ', $value);
-                $row[] = $value;
+                $row[] = $this->sanitizeCsvCell($value);
             }
-            $row[] = $record->status;
-            $row[] = $record->currentStage?->name ?? '';
-            $row[] = $record->creator?->name ?? '';
-            $row[] = $record->created_at->format('Y-m-d H:i');
+            $row[] = $this->sanitizeCsvCell($record->status);
+            $row[] = $this->sanitizeCsvCell($record->currentStage?->name ?? '');
+            $row[] = $this->sanitizeCsvCell($record->creator?->name ?? '');
+            $row[] = $this->sanitizeCsvCell($record->created_at->format('Y-m-d H:i'));
             fputcsv($handle, $row);
         }
 
@@ -62,5 +62,14 @@ class DynamicRecordController extends Controller
             'Content-Type'        => 'text/csv',
             'Content-Disposition' => "attachment; filename=\"{$filename}\"",
         ]);
+    }
+
+    private function sanitizeCsvCell(mixed $value): string
+    {
+        $str = (string) $value;
+        if ($str !== '' && in_array($str[0], ['=', '+', '-', '@', "\t", "\r"], true)) {
+            return "'" . $str;
+        }
+        return $str;
     }
 }

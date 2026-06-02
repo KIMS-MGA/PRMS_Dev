@@ -75,6 +75,8 @@ class TextEditorController extends Controller
      */
     public function storeHistory(Request $request, Record $record, string $fieldSlug)
     {
+        $this->authorizeRecordAccess($request, $record);
+
         $request->validate([
             'action'  => 'required|in:insert,delete',
             'content' => 'required|string|min:1|max:10000',

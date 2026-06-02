@@ -182,7 +182,7 @@
                                                             class="w-full min-h-[5rem] border border-gray-200 rounded-lg px-3 py-2 bg-gray-50 text-sm text-gray-700 overflow-auto max-h-48 cursor-default [&_strong]:font-bold [&_em]:italic [&_p]:mb-1 [&_h1]:text-lg [&_h1]:font-bold [&_h2]:font-bold [&_img]:max-w-full"
                                                         >
                                                             @if(!empty($fields[$index]['options_raw_template']))
-                                                                {!! $fields[$index]['options_raw_template'] !!}
+                                                                <iframe sandbox="" srcdoc="{{ $fields[$index]['options_raw_template'] ?? '' }}" style="width:100%;border:none;min-height:60px;"></iframe>
                                                             @else
                                                                 <span class="text-gray-400 italic">No template set. Import a .docx or switch to Edit HTML to paste content.</span>
                                                             @endif

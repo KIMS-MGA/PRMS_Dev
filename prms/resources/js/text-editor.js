@@ -38,7 +38,7 @@ import {
 import { saveAs } from 'file-saver'
 
 // Determine Hocuspocus WS URL
-const WS_URL = window.HOCUSPOCUS_URL || `ws://${window.location.hostname}:1234`
+const WS_URL = window.HOCUSPOCUS_URL || `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:1234`
 
 // Custom FontSize extension — adds fontSize attribute to the TextStyle mark
 const FontSize = Extension.create({
@@ -327,9 +327,8 @@ const ResizableImage = Image.extend({
       }
 
       img.addEventListener('click', e => { e.stopPropagation(); showHandles() })
-      document.addEventListener('click', e => {
-        if (!wrapper.contains(e.target)) hideHandles()
-      })
+      const docClickHandler = (e) => { if (!wrapper.contains(e.target)) hideHandles() }
+      document.addEventListener('click', docClickHandler)
 
       const applyAlignStyles = (align) => {
         if (align === 'block') {
@@ -377,6 +376,9 @@ const ResizableImage = Image.extend({
             applyAlignStyles(updatedNode.attrs.align || 'block')
           }
           return true
+        },
+        destroy() {
+          document.removeEventListener('click', docClickHandler)
         },
       }
     }
@@ -452,6 +454,8 @@ class TextEditorInstance {
           Promise.resolve().then(() => { this._remoteUpdate = false })
         }
       })
+
+      this.provider.on('awarenessChange', () => this.updatePresence())
     }
 
     const extensions = [
@@ -1392,7 +1396,7 @@ class TextEditorInstance {
     }
 
     // Outside-click: close table picker and page setup
-    document.addEventListener('mousedown', (e) => {
+    this._docMousedownToolbarHandler = (e) => {
       const tableBtn = this.container.querySelector('[data-cmd="table"]')
       const setupBtn = this.container.querySelector('[data-cmd="pageSetup"]')
 
@@ -1406,7 +1410,8 @@ class TextEditorInstance {
           this.pageSetupDropdown.style.display = 'none'
         }
       }
-    })
+    }
+    document.addEventListener('mousedown', this._docMousedownToolbarHandler)
 
     this.editor.on('selectionUpdate', () => this.updateToolbarState())
     this.editor.on('transaction',     () => {
@@ -1501,9 +1506,6 @@ class TextEditorInstance {
     if (this.statusDot)   this.statusDot.style.backgroundColor = colors[status] || '#6b7280'
     if (this.statusLabel) this.statusLabel.textContent = labels[status] || status
 
-    if (this.provider && status === 'synced') {
-      this.provider.on('awarenessChange', () => this.updatePresence())
-    }
   }
 
   updatePresence() {
@@ -1846,11 +1848,12 @@ class TextEditorInstance {
       this.commentTooltip.style.left = (coords.left) + 'px'
     })
 
-    document.addEventListener('mousedown', (e) => {
+    this._docMousedownCommentHandler = (e) => {
       if (!this.commentTooltip.contains(e.target) && !this.commentPopover.contains(e.target)) {
         this.commentTooltip.style.display = 'none'
       }
-    })
+    }
+    document.addEventListener('mousedown', this._docMousedownCommentHandler)
 
     this.commentTooltip.querySelector('.te-add-comment-btn').addEventListener('click', (e) => {
       e.preventDefault()
@@ -2259,6 +2262,14 @@ class TextEditorInstance {
     this._rulerObserver?.disconnect()
     if (this._fsEscHandler) document.removeEventListener('keydown', this._fsEscHandler)
     if (this._reviewDoneHandler) window.removeEventListener('review-marked-done', this._reviewDoneHandler)
+    if (this._docMousedownToolbarHandler) {
+      document.removeEventListener('mousedown', this._docMousedownToolbarHandler)
+      this._docMousedownToolbarHandler = null
+    }
+    if (this._docMousedownCommentHandler) {
+      document.removeEventListener('mousedown', this._docMousedownCommentHandler)
+      this._docMousedownCommentHandler = null
+    }
     document.body.style.overflow = ''
     this.editor?.destroy()
     this.provider?.destroy()

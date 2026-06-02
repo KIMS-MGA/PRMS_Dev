@@ -36,6 +36,10 @@ class SendDateFieldReminders extends Command
 
                 if (!$fieldSlug || empty($recipients)) continue;
 
+                if (!preg_match('/^[a-zA-Z0-9_]+$/', $fieldSlug)) {
+                    continue;
+                }
+
                 $targetDate = Carbon::today()->addDays($daysBefore)->format('Y-m-d');
 
                 $records = Record::whereRaw(

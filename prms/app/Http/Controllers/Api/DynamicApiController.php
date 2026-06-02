@@ -44,6 +44,9 @@ class DynamicApiController extends Controller
             $fields = $module->fields;
             $query->where(function ($q) use ($search, $fields) {
                 foreach ($fields as $field) {
+                    if (!preg_match('/^[a-zA-Z0-9_]+$/', $field->slug)) {
+                        continue;
+                    }
                     $q->orWhereRaw(
                         "LOWER(JSON_UNQUOTE(JSON_EXTRACT(data, '$.{$field->slug}'))) LIKE ?",
                         ['%' . strtolower($search) . '%']

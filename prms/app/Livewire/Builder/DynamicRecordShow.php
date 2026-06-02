@@ -546,14 +546,8 @@ class DynamicRecordShow extends Component
 
         // Re-mint editor tokens if lost after Livewire re-hydration (protected property not in snapshot)
         if (empty($this->editorTokens)) {
-            $tokenPrefix = 'editor-' . $this->recordId . '-';
-            foreach ($this->module->fields as $field) {
-                if ($field->type === 'text_editor') {
-                    $this->editorTokens[$field->slug] = auth()->user()
-                        ->createToken($tokenPrefix . $field->slug, ['editor:read', 'editor:write'], now()->addHours(8))
-                        ->plainTextToken;
-                }
-            }
+            $this->editorTokens = app(\App\Services\TokenMintingService::class)
+                ->mintEditorTokens(auth()->user(), $this->module, $this->recordId);
         }
         $editorTokens = $this->editorTokens;
 
