@@ -2,7 +2,7 @@
 
 **Branch:** `general-refinement`
 **Author:** KIMS-MGA
-**Total Changes:** 16 files changed, 1,311 insertions(+), 434 deletions(-)
+**Total Changes:** 25 files changed, 1,363 insertions(+), 459 deletions(-)
 
 ---
 
@@ -21,6 +21,7 @@
 | 9 | `b4bc49ad` | Jun 1, 2026 | Prevent the workflow from advancing prematurely when multiple reviewers are assigned. |
 | 10 | `3f34a4b0` | Jun 1, 2026 | Merge branch 'general-refinement' (upstream updates) |
 | 11 | `1e35db1e` | Jun 2, 2026 | Implement Hocuspocus collaborative editing server and add dynamic record management UI components |
+| 12 | `b11a34aa` | Jun 2, 2026 | Implement real-time collaborative text editor with Tiptap, Hocuspocus, and advanced formatting extensions |
 
 ---
 
@@ -232,6 +233,40 @@ Merge commit synchronizing local branch with remote repository changes.
 
 ---
 
+## Commit 12 — `b11a34aa` | Jun 2, 2026
+
+### Security: Hardening, Text Editor Memory-Leak Fixes & WebSocket Protocol Fix
+
+**Files changed:**
+- `prms/app/Console/Commands/SendDateFieldReminders.php` — 4 lines added
+- `prms/app/Http/Controllers/Api/DynamicApiController.php` — 3 lines added
+- `prms/app/Http/Controllers/DynamicRecordController.php` — 19 lines added, 4 lines removed
+- `prms/app/Http/Controllers/TextEditorController.php` — 2 lines added
+- `prms/app/Livewire/Admin/UserManagement.php` — 1 line added
+- `prms/app/Livewire/Builder/DynamicRecordShow.php` — 10 lines added, 5 lines removed
+- `prms/hocuspocus/server.js` — 3 lines added
+- `prms/resources/js/text-editor.js` — 33 lines added, 8 lines removed
+- `prms/resources/views/livewire/builder/module-form.blade.php` — 2 lines changed
+
+**What changed:**
+
+**Security fixes:**
+- **`SendDateFieldReminders` / `DynamicApiController`**: Added `preg_match` alphanumeric allow-list validation on field slugs before embedding them in `JSON_EXTRACT` raw SQL — prevents SQL injection via malformed module field slugs.
+- **`DynamicRecordController::exportCsv`**: Added a `sanitizeCsvCell()` helper that prefixes cells starting with `=`, `+`, `-`, `@`, tab, or carriage return with a single quote — prevents CSV formula injection when exported files are opened in spreadsheet applications.
+- **`TextEditorController::storeHistory`**: Added `authorizeRecordAccess()` guard at the top of the method before any validation — the history write endpoint previously had no ownership check.
+- **`module-form.blade.php`**: Replaced raw `{!! $options_raw_template !!}` output with a sandboxed `<iframe srcdoc="...">` — eliminates stored XSS from admin-supplied HTML templates.
+
+**Collaborative editor reliability fixes:**
+- **`text-editor.js`**: WebSocket URL now upgrades to `wss://` when the page is served over HTTPS instead of always using `ws://` — fixes silent connection failures in production SSL environments.
+- **`text-editor.js`**: The three anonymous `document` event listeners registered during editor init (image click-outside, toolbar mousedown, comment mousedown) are now stored as named references (`_docMousedownToolbarHandler`, `_docMousedownCommentHandler`) and explicitly removed in `destroy()` — prevents event listener accumulation across Livewire re-renders.
+- **`text-editor.js`**: `awarenessChange` listener moved from the per-sync `onSynced` status callback to the provider init block — was previously re-registered on every document sync, leaking handlers over time.
+- **`hocuspocus/server.js`**: `onAuthenticate` error handler now only logs unexpected errors; normal `Unauthorized` rejections are silently re-thrown — keeps server logs clean during routine auth failures.
+
+**Refactor:**
+- **`DynamicRecordShow`**: Editor token minting in the Livewire re-hydration path is now delegated to `TokenMintingService::mintEditorTokens()` — removes the last inline token-creation loop from a Livewire component.
+
+---
+
 ## Summary of All Files Changed
 
 | File | Change |
@@ -248,7 +283,14 @@ Merge commit synchronizing local branch with remote repository changes.
 | `prms/app/Services/RecordCommentService.php` | New — comment creation/deletion |
 | `prms/app/Services/RecordSaveService.php` | New — record save and file upload logic |
 | `prms/app/Services/TokenMintingService.php` | New — editor token management |
-| `prms/hocuspocus/server.js` | Updated — refined env var defaults using nullish coalescing; removed hardcoded table prefix and default password |
+| `prms/hocuspocus/server.js` | Updated — refined env var defaults using nullish coalescing; removed hardcoded table prefix and default password; improved auth error logging |
 | `prms/phpunit.xml` | Updated — added unique testing compiled views path for concurrent local test runs |
 | `prms/public/storage/.gitignore` | New — gitignore for storage symlink |
 | `prms/routes/web.php` | Updated — removed three inline closures and mapped to NotificationController to maximize route caching performance |
+| `prms/app/Console/Commands/SendDateFieldReminders.php` | Updated — added field slug allow-list validation to prevent SQL injection in raw queries |
+| `prms/app/Http/Controllers/Api/DynamicApiController.php` | Updated — added field slug allow-list validation before JSON_EXTRACT raw SQL |
+| `prms/app/Http/Controllers/DynamicRecordController.php` | Updated — added sanitizeCsvCell() to prevent CSV formula injection on export |
+| `prms/app/Http/Controllers/TextEditorController.php` | Updated — added authorizeRecordAccess() guard to storeHistory endpoint |
+| `prms/app/Livewire/Admin/UserManagement.php` | Updated — added TODO note for unbounded user query pagination |
+| `prms/resources/js/text-editor.js` | Updated — WebSocket wss:// protocol fix; event listener memory-leak fixes; awarenessChange listener moved to init |
+| `prms/resources/views/livewire/builder/module-form.blade.php` | Updated — replaced raw HTML output with sandboxed iframe to prevent stored XSS |
