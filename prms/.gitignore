@@ -2,6 +2,7 @@
 .md
 /vendor
 /node_modules
+**/node_modules
 /public/build
 /public/hot
 /storage/framework
@@ -9,3 +10,12 @@
 /storage/logs
 /.vscode
 /.idea
+
+# Hocuspocus collaboration server
+hocuspocus/package-lock.json
+
+# Temporary/debug scripts
+tmp_*.php
+tmp_*.js
+tmp_*.mjs
+tmp_*.ts

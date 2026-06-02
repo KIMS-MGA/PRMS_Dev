@@ -124,7 +124,7 @@
                         @php
                             $vc = $field->visibility_conditions;
                             $hasVc = !empty($vc['field']);
-                            $colSpanClass = ($field->col_span ?? 1) == 2 ? 'md:col-span-2' : '';
+                            $colSpanClass = ($field->type === 'text_editor' || ($field->col_span ?? 1) == 2) ? 'md:col-span-2' : '';
                         @endphp
                         <div class="{{ $colSpanClass }}" @if($hasVc)
                             x-data

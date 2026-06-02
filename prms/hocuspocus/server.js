@@ -4,10 +4,10 @@ import mysql from 'mysql2/promise'
 import fetch from 'node-fetch'
 
 const db = await mysql.createPool({
-  host: process.env.DB_HOST || 'mysql',
-  database: process.env.DB_DATABASE || 'prms',
-  user: process.env.DB_USER || 'prms',
-  password: process.env.DB_PASSWORD || 'secret',
+  host: process.env.DB_HOST ?? 'mysql',
+  database: process.env.DB_DATABASE ?? 'prms',
+  user: process.env.DB_USER ?? 'prms',
+  password: process.env.DB_PASSWORD ?? '',
   waitForConnections: true,
   connectionLimit: 10,
 })
@@ -21,8 +21,7 @@ function parseDocName(name) {
   return { recordId: match[1], fieldSlug: match[2] }
 }
 
-// Table prefix used by Laravel (from DB_PREFIX env or default 'jea_')
-const TABLE_PREFIX = process.env.DB_PREFIX || 'jea_'
+const TABLE_PREFIX = process.env.DB_PREFIX ?? ''
 
 const server = Server.configure({
   port: 1234,

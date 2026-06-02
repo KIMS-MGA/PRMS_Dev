@@ -113,7 +113,7 @@
                                         @elseif($field->type === 'text_editor' && !empty($val))
                                             <span class="text-gray-500 truncate block max-w-xs">{{ Str::limit(strip_tags($val), 80) }}</span>
                                         @else
-                                            {{ $val ?? '-' }}
+                                            {{ is_array($val) ? (implode(', ', array_filter(array_column($val, 'original_name'))) ?: implode(', ', array_filter($val)) ?: '-') : ($val ?? '-') }}
                                         @endif
                                     </td>
                                 @endforeach

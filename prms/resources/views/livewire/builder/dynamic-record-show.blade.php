@@ -133,7 +133,7 @@
                 @foreach($module->fields as $field)
                     @php
                         $val = $record->data[$field->slug] ?? null;
-                        $colSpanClass = ($field->col_span ?? 1) == 2 ? 'md:col-span-2' : '';
+                        $colSpanClass = ($field->type === 'text_editor' || ($field->col_span ?? 1) == 2) ? 'md:col-span-2' : '';
                     @endphp
                     <div class="{{ $colSpanClass }}">
                         <dt class="text-xs font-semibold text-gray-500 uppercase tracking-wide">{{ $field->name }}</dt>
