@@ -29,7 +29,8 @@ class DynamicRecordShow extends Component
     public $newComment = '';
     public $reviewerAttachment = null;
     public $stageFieldValues = [];
-    protected array $editorTokens = []; // Minted in mount(); passed via render() — not exposed to Livewire snapshot
+    #[\Livewire\Attributes\Locked]
+    public array $editorTokens = []; // public so Livewire serializes it in the encrypted snapshot; Locked prevents client mutation
 
     public function mount($moduleSlug, $record)
     {

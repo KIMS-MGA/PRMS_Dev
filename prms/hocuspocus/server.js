@@ -60,10 +60,17 @@ const server = Server.configure({
   port: 1234,
 
   async onAuthenticate({ token, documentName }) {
-    if (!token) throw new Error('No token provided')
+    if (!token) {
+      console.error('[onAuthenticate] No token provided for doc:', documentName)
+      throw new Error('No token provided')
+    }
 
+    const url = `${APP_URL}/api/text-editor/validate-token`
+    console.log(`[onAuthenticate] doc=${documentName} token=${token.slice(0,8)}... url=${url}`)
+
+    let res
     try {
-      const res = await fetch(`${APP_URL}/api/text-editor/validate-token`, {
+      res = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -72,13 +79,25 @@ const server = Server.configure({
         },
         body: JSON.stringify({ document: documentName }),
       })
-      if (!res.ok) throw new Error('Unauthorized')
-      const data = await res.json()
+    } catch (networkErr) {
+      console.error('[onAuthenticate] Network error reaching Laravel:', networkErr.message)
+      throw new Error('Authentication failed')
+    }
+
+    const bodyText = await res.text()
+    console.log(`[onAuthenticate] HTTP ${res.status} response: ${bodyText.slice(0, 300)}`)
+
+    if (!res.ok) {
+      console.error(`[onAuthenticate] Laravel rejected token — HTTP ${res.status}`)
+      throw new Error('Authentication failed')
+    }
+
+    try {
+      const data = JSON.parse(bodyText)
+      console.log(`[onAuthenticate] OK user=${data.user?.name}`)
       return { user: data.user }
-    } catch (e) {
-      if (e.message !== 'Unauthorized') {
-        console.error('[Hocuspocus onAuthenticate] Unexpected error:', e.message)
-      }
+    } catch (parseErr) {
+      console.error('[onAuthenticate] Could not parse JSON response:', bodyText.slice(0, 200))
       throw new Error('Authentication failed')
     }
   },
