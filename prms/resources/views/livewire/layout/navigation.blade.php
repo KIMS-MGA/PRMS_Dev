@@ -102,11 +102,30 @@ new class extends Component {
                     </svg>
                     Approval Queue
                     @php
-                        $userRoleIds = auth()->user()->roles->pluck('id');
-                        $stageIds = \App\Models\WorkflowStage::whereIn('approver_role_id', $userRoleIds)->pluck('id');
-                        $pending = auth()->user()->hasRole('super admin')
-                            ? \App\Models\Record::whereNotNull('current_stage_id')->count()
-                            : \App\Models\Record::whereIn('current_stage_id', $stageIds)->count();
+                        $navUser = auth()->user();
+                        if ($navUser->hasRole('super admin')) {
+                            $pending = \App\Models\Record::whereNotNull('current_stage_id')->count();
+                        } else {
+                            $navRoleIds   = $navUser->roles->pluck('id');
+                            $navStageIds  = \App\Models\WorkflowStage::whereIn('approver_role_id', $navRoleIds)->pluck('id');
+                            $navPermSlugs = $navUser->permissions
+                                ->filter(fn($p) => str_starts_with($p->name, 'review-') || str_starts_with($p->name, 'approve-'))
+                                ->map(fn($p) => preg_replace('/^(review|approve)-/', '', $p->name));
+                            $navPermModuleIds = \App\Models\Module::whereIn('slug', $navPermSlugs)->pluck('id');
+                            $pending = \App\Models\Record::whereNotNull('current_stage_id')
+                                ->where(function ($q) use ($navStageIds, $navPermModuleIds) {
+                                    $q->whereIn('current_stage_id', $navStageIds)
+                                      ->orWhereIn('module_id', $navPermModuleIds);
+                                })
+                                ->whereNotExists(function ($q) use ($navUser) {
+                                    $q->from('record_approvals')
+                                      ->whereColumn('record_approvals.record_id', 'records.id')
+                                      ->whereColumn('record_approvals.stage_id', 'records.current_stage_id')
+                                      ->where('record_approvals.user_id', $navUser->id)
+                                      ->whereNotNull('record_approvals.reviewed_at');
+                                })
+                                ->count();
+                        }
                     @endphp
                     @if($pending > 0)
                         <span

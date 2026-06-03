@@ -290,6 +290,156 @@ it('record exits queue when one reviewer approves and the other returns (all fin
 });
 
 // ---------------------------------------------------------------------------
+// Resubmission after return — Secretariat queue regression
+// ---------------------------------------------------------------------------
+
+it('resubmitted proposal reappears in Secretariat queue after proponent resubmits', function () {
+    // Stage 1: Secretariat approval stage (approval-type, not review).
+    // The Secretariat user approves, record advances. Then it gets returned
+    // by a downstream reviewer.  On resubmission the Secretariat's stale
+    // finalized RecordApproval row must be cleared so the queue shows it again.
+
+    $module = Module::create([
+        'name' => 'Secretariat Test Module',
+        'slug' => 'secretariat-test',
+    ]);
+
+    $secretariatRole = \Spatie\Permission\Models\Role::firstOrCreate(['name' => 'Secretariat', 'guard_name' => 'web']);
+
+    $secretariatStage = WorkflowStage::create([
+        'module_id'        => $module->id,
+        'name'             => 'Secretariat Approval',
+        'order'            => 1,
+        'stage_type'       => 'approval',
+        'approver_role_id' => $secretariatRole->id,
+        'is_final_approval' => false,
+        'default_status'   => 'Submitted',
+    ]);
+
+    $secretariat = User::factory()->create();
+    $secretariat->assignRole($secretariatRole);
+
+    $proponent = User::factory()->create();
+
+    // Record is in the Secretariat stage — the Secretariat previously finalized.
+    $record = Record::create([
+        'module_id'        => $module->id,
+        'data'             => ['title' => 'Resubmitted Proposal'],
+        'status'           => 'Returned',   // returned to proponent after a prior cycle
+        'current_stage_id' => null,
+        'stage_entered_at' => now()->subDay(),
+        'created_by'       => $proponent->id,
+        'updated_by'       => $proponent->id,
+    ]);
+
+    // Simulate the stale finalized approval row from the previous review cycle.
+    // This is the exact state that caused the bug: the Secretariat had approved
+    // the record in a past cycle, leaving a reviewed_at row behind.
+    RecordApproval::create([
+        'record_id'   => $record->id,
+        'stage_id'    => $secretariatStage->id,
+        'user_id'     => $secretariat->id,
+        'action'      => 'approved',
+        'reviewed_at' => now()->subDay(), // stale row from prior cycle
+    ]);
+
+    // Proponent resubmits — triggers submitForApproval service
+    app(\App\Services\RecordApprovalService::class)
+        ->submitForApproval($record, $module, $proponent);
+
+    $record->refresh();
+
+    // Record should now be at the first stage awaiting Secretariat action
+    expect($record->status)->toBe('Submitted');
+    expect($record->current_stage_id)->toBe($secretariatStage->id);
+
+    // The stale finalized row must have been cleared so the queue filter works
+    $staleRow = RecordApproval::where('record_id', $record->id)
+        ->where('stage_id', $secretariatStage->id)
+        ->where('user_id', $secretariat->id)
+        ->whereNotNull('reviewed_at')
+        ->first();
+    expect($staleRow)->toBeNull();
+
+    // Core assertion: Secretariat's ApprovalQueue must show the resubmitted proposal
+    Livewire::actingAs($secretariat)
+        ->test(ApprovalQueue::class)
+        ->assertSee('Resubmitted Proposal');
+});
+
+it('resubmission preserves audit history rows from previous cycle', function () {
+    $module = Module::create([
+        'name' => 'Audit Preserve Module',
+        'slug' => 'audit-preserve',
+    ]);
+
+    $secretariatRole = \Spatie\Permission\Models\Role::firstOrCreate(['name' => 'Secretariat', 'guard_name' => 'web']);
+
+    $secretariatStage = WorkflowStage::create([
+        'module_id'        => $module->id,
+        'name'             => 'Secretariat Approval',
+        'order'            => 1,
+        'stage_type'       => 'approval',
+        'approver_role_id' => $secretariatRole->id,
+        'is_final_approval' => false,
+        'default_status'   => 'Submitted',
+    ]);
+
+    $secretariat = User::factory()->create();
+    $secretariat->assignRole($secretariatRole);
+
+    $proponent = User::factory()->create();
+
+    $record = Record::create([
+        'module_id'        => $module->id,
+        'data'             => ['title' => 'Audit Proposal'],
+        'status'           => 'Returned',
+        'current_stage_id' => null,
+        'stage_entered_at' => now()->subDay(),
+        'created_by'       => $proponent->id,
+        'updated_by'       => $proponent->id,
+    ]);
+
+    // Non-finalized (no reviewed_at) rows — e.g. the original 'submitted' action —
+    // must NOT be deleted on resubmission.
+    RecordApproval::create([
+        'record_id'   => $record->id,
+        'stage_id'    => $secretariatStage->id,
+        'user_id'     => $proponent->id,
+        'action'      => 'submitted',
+        'reviewed_at' => null, // audit/log row — no finalization timestamp
+    ]);
+
+    // Stale finalized row (the one to be cleared)
+    RecordApproval::create([
+        'record_id'   => $record->id,
+        'stage_id'    => $secretariatStage->id,
+        'user_id'     => $secretariat->id,
+        'action'      => 'approved',
+        'reviewed_at' => now()->subDay(),
+    ]);
+
+    app(\App\Services\RecordApprovalService::class)
+        ->submitForApproval($record, $module, $proponent);
+
+    // The non-finalized audit row should survive
+    $auditRow = RecordApproval::where('record_id', $record->id)
+        ->where('action', 'submitted')
+        ->whereNull('reviewed_at')
+        ->count();
+
+    // There are now 2 non-finalized 'submitted' rows: the old one + the new one
+    expect($auditRow)->toBeGreaterThanOrEqual(1);
+
+    // The stale finalized row must be gone
+    $staleRow = RecordApproval::where('record_id', $record->id)
+        ->where('stage_id', $secretariatStage->id)
+        ->whereNotNull('reviewed_at')
+        ->exists();
+    expect($staleRow)->toBeFalse();
+});
+
+// ---------------------------------------------------------------------------
 // Audit trail
 // ---------------------------------------------------------------------------
 

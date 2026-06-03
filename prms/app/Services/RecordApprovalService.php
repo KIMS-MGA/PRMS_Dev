@@ -39,6 +39,18 @@ class RecordApprovalService
             throw new \RuntimeException('No approval stages are configured for this module.');
         }
 
+        // When resubmitting after a return, clear stale finalized approval rows for
+        // the first stage from the previous review cycle.  Without this, the
+        // ApprovalQueue "whereNotExists reviewed_at" filter would still exclude
+        // Secretariat users who had already finalized in the earlier cycle, making
+        // the proposal invisible to them after resubmission.
+        if ($record->status === 'Returned') {
+            RecordApproval::where('record_id', $record->id)
+                ->where('stage_id', $firstStage->id)
+                ->whereNotNull('reviewed_at')
+                ->delete();
+        }
+
         $record->update([
             'status'           => 'Submitted',
             'current_stage_id' => $firstStage->id,
