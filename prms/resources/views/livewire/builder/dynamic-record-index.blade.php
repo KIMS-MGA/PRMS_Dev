@@ -140,12 +140,17 @@
                                 @endif
                                 <td class="hidden md:table-cell p-3 text-xs text-gray-400">{{ $rec->created_at->format('M d, Y') }}</td>
                                 <td class="p-3 text-sm">
+                                    @php
+                                        $isOwner = $rec->created_by === auth()->id();
+                                        $canEditThis = $canEditRecords && (!$isProponent || $isOwner);
+                                        $canDeleteThis = auth()->user()->can("delete-{$moduleSlug}") && (!$isProponent || $isOwner);
+                                    @endphp
                                     <div class="flex gap-3">
                                         <a href="{{ route('dynamic.show', ['moduleSlug' => $moduleSlug, 'record' => $rec->id]) }}" wire:navigate class="hover:underline text-gray-600 font-medium whitespace-nowrap text-xs">View</a>
-                                        @if($canEditRecords && $rec->status !== 'Completed' && ($rec->currentStage === null || ($rec->currentStage->allow_edit ?? true)))
+                                        @if($canEditThis && $rec->status !== 'Completed' && ($rec->currentStage === null || ($rec->currentStage->allow_edit ?? true)))
                                             <a href="{{ route('dynamic.edit', ['moduleSlug' => $moduleSlug, 'record' => $rec->id]) }}" wire:navigate class="hover:underline text-indigo-600 font-medium whitespace-nowrap text-xs">Edit</a>
                                         @endif
-                                        @if(auth()->user()->can("delete-{$moduleSlug}"))
+                                        @if($canDeleteThis)
                                             <button wire:click="deleteRecord({{ $rec->id }})" wire:confirm="Are you sure you want to delete this record?" class="text-red-500 hover:underline whitespace-nowrap text-xs">Delete</button>
                                         @endif
                                     </div>

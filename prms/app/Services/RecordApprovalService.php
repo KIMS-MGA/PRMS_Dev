@@ -297,17 +297,20 @@ class RecordApprovalService
     }
 
     /**
-     * Check if a user can edit a record.
-     *
-     * @param User $user
-     * @param string $moduleSlug
-     * @return bool
+     * Check if a user can edit a specific record.
+     * Proponents may only edit records they created; privileged roles have no restriction.
      */
-    public function canEditRecord(User $user, string $moduleSlug): bool
+    public function canEditRecord(User $user, string $moduleSlug, ?Record $record = null): bool
     {
         if ($user->hasRole('super admin')) return true;
-        if ($user->can("edit-{$moduleSlug}")) return true;
-        return false;
+        if (!$user->can("edit-{$moduleSlug}")) return false;
+
+        // Proponents are restricted to records they own
+        if ($user->hasRole('Proponent') && $record && $record->created_by !== $user->id) {
+            return false;
+        }
+
+        return true;
     }
 
     /**

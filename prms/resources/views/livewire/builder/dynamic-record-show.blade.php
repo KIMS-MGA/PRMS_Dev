@@ -427,6 +427,9 @@
         </div>
         @endif
 
+        {{-- Meeting Schedule --}}
+        <livewire:builder.record-scheduler :record-id="$record->id" :module-slug="$moduleSlug" />
+
         {{-- Remarks --}}
         <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg p-6">
             <h3 class="text-lg font-bold text-gray-800 border-b pb-2 mb-4 flex items-center gap-2">
