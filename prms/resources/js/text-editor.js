@@ -37,8 +37,13 @@ import {
 } from 'docx'
 import { saveAs } from 'file-saver'
 
-// Determine Hocuspocus WS URL
-const WS_URL = window.HOCUSPOCUS_URL || `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:1234`
+// Determine Hocuspocus WS URL.
+// Priority: 1) explicit window.HOCUSPOCUS_URL (set by Blade for multi-env),
+//           2) VITE_HOCUSPOCUS_URL from .env (baked in at build time),
+//           3) derive from current hostname + port 1234 (local dev fallback).
+const WS_URL = window.HOCUSPOCUS_URL
+  || (typeof import.meta !== 'undefined' && import.meta.env?.VITE_HOCUSPOCUS_URL)
+  || `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:1234`
 
 // Custom FontSize extension — adds fontSize attribute to the TextStyle mark
 const FontSize = Extension.create({

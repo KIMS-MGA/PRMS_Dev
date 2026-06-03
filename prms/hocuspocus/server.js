@@ -2,17 +2,50 @@ import { Server } from '@hocuspocus/server'
 import { Database } from '@hocuspocus/extension-database'
 import mysql from 'mysql2/promise'
 import fetch from 'node-fetch'
+import { readFileSync } from 'fs'
+import { resolve, dirname } from 'path'
+import { fileURLToPath } from 'url'
+
+// Load the Laravel .env from the project root (one level up from hocuspocus/).
+// This ensures DB_USERNAME, APP_URL, etc. are available even when the process
+// is started without explicit env-var injection (e.g. `node server.js` locally).
+const __dir = dirname(fileURLToPath(import.meta.url))
+const envPath = resolve(__dir, '..', '.env')
+try {
+  const envContent = readFileSync(envPath, 'utf8')
+  for (const line of envContent.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const eqIdx = trimmed.indexOf('=')
+    if (eqIdx < 1) continue
+    const key = trimmed.slice(0, eqIdx).trim()
+    let val  = trimmed.slice(eqIdx + 1).trim()
+    // Strip surrounding quotes (Laravel .env allows "value" or 'value')
+    if ((val.startsWith('"') && val.endsWith('"')) ||
+        (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1)
+    }
+    // Only set if not already provided by the shell environment
+    if (!(key in process.env)) process.env[key] = val
+  }
+  console.log('[Hocuspocus] Loaded .env from', envPath)
+} catch (e) {
+  console.warn('[Hocuspocus] Could not load .env file:', e.message)
+}
 
 const db = await mysql.createPool({
-  host: process.env.DB_HOST ?? 'mysql',
-  database: process.env.DB_DATABASE ?? 'prms',
-  user: process.env.DB_USER ?? 'prms',
+  host:     process.env.DB_HOST     ?? '127.0.0.1',
+  database: process.env.DB_DATABASE ?? 'prms_dev',
+  // Laravel uses DB_USERNAME; support both for compatibility
+  user:     process.env.DB_USERNAME ?? process.env.DB_USER ?? 'root',
   password: process.env.DB_PASSWORD ?? '',
+  port:     parseInt(process.env.DB_PORT ?? '3306', 10),
   waitForConnections: true,
   connectionLimit: 10,
 })
 
-const APP_URL = process.env.APP_URL || 'http://app'
+// Must match APP_URL in .env — the Node server calls Laravel's validate-token endpoint
+const APP_URL = process.env.APP_URL || 'http://localhost'
 
 // Parse document name: "record-{id}-field-{slug}"
 function parseDocName(name) {
@@ -27,10 +60,17 @@ const server = Server.configure({
   port: 1234,
 
   async onAuthenticate({ token, documentName }) {
-    if (!token) throw new Error('No token provided')
+    if (!token) {
+      console.error('[onAuthenticate] No token provided for doc:', documentName)
+      throw new Error('No token provided')
+    }
 
+    const url = `${APP_URL}/api/text-editor/validate-token`
+    console.log(`[onAuthenticate] doc=${documentName} token=${token.slice(0,8)}... url=${url}`)
+
+    let res
     try {
-      const res = await fetch(`${APP_URL}/api/text-editor/validate-token`, {
+      res = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -39,13 +79,25 @@ const server = Server.configure({
         },
         body: JSON.stringify({ document: documentName }),
       })
-      if (!res.ok) throw new Error('Unauthorized')
-      const data = await res.json()
+    } catch (networkErr) {
+      console.error('[onAuthenticate] Network error reaching Laravel:', networkErr.message)
+      throw new Error('Authentication failed')
+    }
+
+    const bodyText = await res.text()
+    console.log(`[onAuthenticate] HTTP ${res.status} response: ${bodyText.slice(0, 300)}`)
+
+    if (!res.ok) {
+      console.error(`[onAuthenticate] Laravel rejected token — HTTP ${res.status}`)
+      throw new Error('Authentication failed')
+    }
+
+    try {
+      const data = JSON.parse(bodyText)
+      console.log(`[onAuthenticate] OK user=${data.user?.name}`)
       return { user: data.user }
-    } catch (e) {
-      if (e.message !== 'Unauthorized') {
-        console.error('[Hocuspocus onAuthenticate] Unexpected error:', e.message)
-      }
+    } catch (parseErr) {
+      console.error('[onAuthenticate] Could not parse JSON response:', bodyText.slice(0, 200))
       throw new Error('Authentication failed')
     }
   },
