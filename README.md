@@ -1,8 +1,8 @@
-# Branch: `general-refinement` — Changes vs `main`
+# Branch: `feature_TRC-Scheduling` — Changes vs `main`
 
-**Branch:** `general-refinement`
+**Branch:** `feature_TRC-Scheduling`
 **Author:** KIMS-MGA
-**Total Changes:** 25 files changed, 1,363 insertions(+), 459 deletions(-)
+**Total Changes:** 16 files changed, 589 insertions(+), 74 deletions(-)
 
 ---
 
@@ -10,287 +10,216 @@
 
 | # | Hash | Date | Message |
 |---|------|------|---------|
-| 1 | `95c9042` | May 28, 2026 | Refactoring of the DynamicRecordForm Livewire component into Service classes |
-| 2 | `d830d069` | May 28, 2026 | Restrict stats count based on the account |
-| 3 | `6cabead` | Jun 1, 2026 | docs: replace default Laravel README with PRMS project documentation |
-| 4 | `9a8a69c8` | Jun 1, 2026 | Create README.md |
-| 5 | `0cb99419` | Jun 1, 2026 | Encapsulating notification processing logic into dedicated NotificationController |
-| 6 | `b3894b04` | Jun 1, 2026 | Merge branch 'general-refinement' (upstream updates) |
-| 7 | `1fe0e1c0` | Jun 1, 2026 | refactor: remove unused project configuration files |
-| 8 | `58b0ab0e` | Jun 1, 2026 | Update README.md |
-| 9 | `b4bc49ad` | Jun 1, 2026 | Prevent the workflow from advancing prematurely when multiple reviewers are assigned. |
-| 10 | `3f34a4b0` | Jun 1, 2026 | Merge branch 'general-refinement' (upstream updates) |
-| 11 | `1e35db1e` | Jun 2, 2026 | Implement Hocuspocus collaborative editing server and add dynamic record management UI components |
-| 12 | `b11a34aa` | Jun 2, 2026 | Implement real-time collaborative text editor with Tiptap, Hocuspocus, and advanced formatting extensions |
+| 1 | `0c228c64` | Jun 03, 2026 | Fix collaborative editor: Hocuspocus not syncing between users (Offline status) |
+| 2 | `821edc05` | Jun 03, 2026 | Collaborative Text Editor - Debugging & Fix |
+| 3 | `dc5dac51` | Jun 03, 2026 | Add TRC/Ad Referendum meeting schedule module |
+| 4 | `5f557ae7` | Jun 03, 2026 | Fix Dashboard TRC Schedule to read from record_schedules table |
+| 5 | `40b1335f` | Jun 03, 2026 | Enforce Proponent ownership: read-only for non-owner proposals |
 
 ---
 
-## Commit 1 — `95c9042` | May 28, 2026
+## Commit 1 — `0c228c64` | Jun 03, 2026
 
-### Refactoring: `DynamicRecordForm` → Service Classes
+### Fix: Hocuspocus Collaborative Editor Not Syncing (Offline Status)
 
 **Files changed:**
-- `app/Livewire/Builder/DynamicRecordForm.php` — 359 lines removed, heavily slimmed down
-- `app/Services/RecordApprovalService.php` — new (398 lines)
-- `app/Services/RecordCommentService.php` — new (45 lines)
-- `app/Services/RecordSaveService.php` — new (101 lines)
-- `app/Services/TokenMintingService.php` — new (44 lines)
-- `public/storage/.gitignore` — new (2 lines)
+- `prms/app/Livewire/Builder/DynamicRecordShow.php` — 18 lines changed
+- `prms/app/Services/TokenMintingService.php` — 32 lines changed
+- `prms/hocuspocus/server.js` — 41 lines added
+- `prms/resources/js/text-editor.js` — 9 lines changed
 
 **What changed:**
 
-The `DynamicRecordForm` Livewire component was refactored to remove its heavy business logic responsibilities. All logic was extracted into 4 clean, domain-specific Service classes under the `App\Services` namespace:
+The collaborative text editor was displaying "Offline" status for concurrent users because the previous token minting strategy deleted **all** tokens for a given record prefix whenever any user loaded the show page — revoking tokens still being actively used by other browser sessions.
 
-| New Service | Responsibility |
-|---|---|
-| `TokenMintingService` | Secure generation, prefixing, and cleanup of editor tokens |
-| `RecordCommentService` | Creating and deleting comments linked to records |
-| `RecordSaveService` | Record updates/creation, file uploads, and attachment versioning |
-| `RecordApprovalService` | Workflow actions: approve, submit, return for revision, branch forward, mark review done — plus authorization guards and DB/mail notifications |
+**`TokenMintingService.php`:**
+- Changed from "delete all tokens for this prefix" to "delete only **expired** tokens (older than 8 hours) for this prefix" — preserves live tokens from concurrent collaborative sessions.
+- Added detection of existing valid tokens via `pluck('name')->flip()` before issuing new ones.
+- Switched to an explicit **delete-then-recreate** strategy per individual field token: since Sanctum only stores the hash (not the raw token), a fresh plain-text token must always be issued for the Blade view — but only the targeted field token is revoked, not all tokens.
 
-**DynamicRecordForm.php changes:**
-- Removed heavy dependency imports
-- Delegated logic inside `mount()`, `persistRecord()`, `submitForApproval()`, `approve()`, `forwardToBranch()`, `returnForRevision()`, `markReviewDone()`, `addComment()`, `deleteComment()` to injected Services via Laravel's `app(...)` container resolver
-- Removed helper authorization methods (`canEditRecord()`, `canAct()`, `canReview()`) from the component — routed through `RecordApprovalService`
+**`DynamicRecordShow.php`:**
+- Removed inline token minting loop from `mount()`.
+- Delegated entirely to `TokenMintingService::mintEditorTokens()` — consistent with the safe per-field strategy.
+
+**`hocuspocus/server.js`:**
+- Added automatic `.env` loader at startup: reads the Laravel project's `.env` file one directory up and injects unset environment variables into `process.env`. Fixes the silent DB/API connection failures when the Node process is started without explicit env injection (e.g. `node server.js` locally).
+- Updated MySQL pool to support `DB_USERNAME` (Laravel convention) as well as `DB_USER` for compatibility.
+- Changed `DB_HOST` default from `'mysql'` to `'127.0.0.1'` and `APP_URL` from `'http://app'` to `'http://localhost'` to match local development environments.
+- Added explicit `DB_PORT` support.
+
+**`text-editor.js`:**
+- `WS_URL` resolution now checks three sources in priority order:
+  1. `window.HOCUSPOCUS_URL` (set by Blade for multi-environment support)
+  2. `import.meta.env.VITE_HOCUSPOCUS_URL` (baked in at build time from `.env`)
+  3. Derived fallback from current hostname + port 1234
 
 ---
 
-## Commit 2 — `d830d069` | May 28, 2026
+## Commit 2 — `821edc05` | Jun 03, 2026
 
-### Feature: Restrict Dashboard Stats by Account
+### Fix: Collaborative Text Editor — Debugging & Editor Token Serialization
 
 **Files changed:**
-- `app/Livewire/Builder/Dashboard.php` — 53 lines added, 7 lines removed
-- `Refactor DynamicRecordForm` — new documentation file (38 lines)
+- `prms/app/Livewire/Builder/DynamicRecordShow.php` — 3 lines changed
+- `prms/hocuspocus/server.js` — 35 lines changed
 
 **What changed:**
 
-A new private method `getScopedRecordQuery()` was added to `Dashboard.php`. This method applies row-level visibility rules to all dashboard queries based on the authenticated user's role and module settings.
+**`DynamicRecordShow.php`:**
+- Changed `$editorTokens` from `protected array` to `public array` with the `#[\Livewire\Attributes\Locked]` attribute. This allows Livewire to serialize the tokens in its encrypted snapshot (so they survive page re-hydration) while the `Locked` attribute prevents client-side mutation of the token values via Livewire's wire protocol.
 
-**Scoping logic:**
-
-| Role | Visibility |
-|---|---|
-| `super admin` | All records (no filter) |
-| `Reviewer` | All records (no filter) |
-| `TRC Secretariat` | All records (no filter) |
-| All other users | Records from unrestricted modules (`my_records_only = false`) **+** records they personally created in restricted modules (`my_records_only = true`) |
-
-**Queries now scoped:**
-
-1. `totalRecords` — total count excluding Draft and Archived
-2. `statusCounts` — per-status breakdown
-3. 30-day trend chart — records created over last 30 days
-4. Per-module stats table — total, pending, and other aggregate counts
-5. TRC Schedule list — records with `date_scheduled` set
-6. Recent activity — last 10 history entries, now filtered to scoped record IDs via `whereIn('record_id', $scopedRecordIds)`
+**`hocuspocus/server.js`:**
+- Expanded `onAuthenticate` with detailed step-by-step diagnostic logging: logs the document name, first 8 characters of the token, the target validation URL, and the full HTTP response body (truncated to 300 chars).
+- Separated the network fetch from the response body parsing into two distinct `try/catch` blocks — previously, a network error and an auth rejection were handled by the same catch clause, making it impossible to distinguish between "Laravel is unreachable" and "Laravel rejected the token."
+- Changed body consumption from `res.json()` to `res.text()` followed by explicit `JSON.parse()` — ensures the raw response body is always captured for logging before any parse attempt.
+- Added explicit `console.error` for HTTP non-OK responses with the status code.
 
 ---
 
-## Commit 3 — `6cabead` | Jun 1, 2026
+## Commit 3 — `dc5dac51` | Jun 03, 2026
 
-### Docs: README Overhaul
+### Feature: TRC/Ad Referendum Meeting Schedule Module
 
 **Files changed:**
-- `README.md` — 330 lines added
+- `prms/app/Livewire/Builder/RecordScheduler.php` — new (173 lines)
+- `prms/app/Models/RecordSchedule.php` — new (29 lines)
+- `prms/database/migrations/2026_06_03_000001_create_record_schedules_table.php` — new (29 lines)
+- `prms/resources/views/livewire/builder/dynamic-record-show.blade.php` — 3 lines added
+- `prms/resources/views/livewire/builder/record-scheduler.blade.php` — new (128 lines)
 
 **What changed:**
 
-The default Laravel boilerplate `README.md` was replaced with full PRMS project documentation covering the system's purpose, structure, and usage.
+A new meeting schedule module was added to the proposal detail page, displayed in the right column after the Approval Log. The feature allows authorized users to schedule, reschedule, and cancel TRC or Ad Referendum meeting dates for proposals currently at those workflow stages.
+
+**New database table — `record_schedules`:**
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `record_id` | FK | Links to the proposal record |
+| `stage_id` | FK (nullable) | The workflow stage at time of scheduling |
+| `scheduled_by` | FK | User who created the schedule entry |
+| `scheduled_at` | datetime | The meeting date and time |
+| `notes` | text (nullable) | Optional location/link notes |
+| `action` | string | `scheduled` \| `rescheduled` \| `cancelled` |
+
+**`RecordSchedule` model** (`app/Models/RecordSchedule.php`):
+- Belongs to `Record`, `WorkflowStage` (via `stage_id`), and `User` (via `scheduled_by` as `scheduler()`).
+- Casts `scheduled_at` as `datetime`.
+
+**`RecordScheduler` Livewire component** (`app/Livewire/Builder/RecordScheduler.php`):
+- Visibility: Panel only renders when `record->currentStage->name` is `TRC Deliberation` or `Ad Referendum Review` (or when schedule history already exists for the record).
+- **Role access**: `canSchedule()` returns `true` only for `TRC Secretariat` role or `super admin` — all other roles are read-only.
+- **`saveSchedule()`**: Validates date (`after_or_equal:today`), time (`H:i`), and optional notes. Determines `action` as `scheduled` or `rescheduled` based on whether a prior non-cancelled entry exists. Notifies all active users via `DynamicNotification` (database + email) on each save.
+- **`cancelSchedule()`**: Creates a new `cancelled` history row referencing the last active `scheduled_at`.
+- **`startEditing()` / `cancelEditing()`**: Toggle the inline form, pre-filling with the current active schedule.
+- **Schedule history**: All entries (scheduled, rescheduled, cancelled) are displayed in reverse chronological order with actor name, meeting date/time, and notes.
+
+**`record-scheduler.blade.php`** (view):
+- Root `<div>` is always rendered (satisfies Livewire's single-root-tag requirement); the panel is hidden via `style="display:none"` when neither condition applies.
+- Shows the current scheduled date/time in a purple-accented card.
+- Editable form with date, time, and notes fields, plus a Reschedule / Cancel Schedule button pair for authorized users.
+- Schedule history log at the bottom of the panel.
+
+**`dynamic-record-show.blade.php`:**
+- Added `<livewire:builder.record-scheduler :record-id="$record->id" :module-slug="$moduleSlug" />` in the right column between the Approval Log and the Remarks section.
 
 ---
 
-## Commit 4 — `9a8a69c8` | Jun 1, 2026
+## Commit 4 — `5f557ae7` | Jun 03, 2026
 
-### Docs: Create README.md
+### Fix: Dashboard TRC Schedule Table Reading from `record_schedules`
 
 **Files changed:**
-- `README.md` — new (106 lines)
+- `prms/app/Livewire/Builder/Dashboard.php` — 20 lines changed
+- `prms/resources/views/livewire/builder/dashboard.blade.php` — 39 lines changed
 
 **What changed:**
 
-Initial creation of the project's custom `README.md` containing dynamic refinement notes and setup updates.
+The "Upcoming TRC Schedule" table on the Dashboard was reading from `record.data['date_scheduled']` — a legacy JSON field approach — while the new scheduler writes to the `record_schedules` table. The two systems were disconnected, so newly saved schedules never appeared on the Dashboard.
+
+**`Dashboard.php`:**
+- Removed the `whereRaw("JSON_UNQUOTE(JSON_EXTRACT(data, '$.date_scheduled')) IS NOT NULL")` query.
+- Replaced with a `RecordSchedule` query using `MAX(id)` per `record_id` to identify the most recently inserted row for each record (auto-increment guarantees this is the latest entry).
+- Filters out entries where `action = 'cancelled'` — cancelled schedules are excluded from the table.
+- Applies the `showPastTrc` toggle via `where('scheduled_at', '>=', now()->startOfDay())`.
+- Eager-loads `record.module`, `stage`, and `scheduler` relations for display.
+- Added `use App\Models\RecordSchedule;` import.
+
+**`dashboard.blade.php`:**
+- Updated table headers: replaced `Date Scheduled` with `Date & Time`; added `Stage` column.
+- Updated row rendering to use `$entry->scheduled_at` (full datetime with time displayed separately), `$entry->record->data['title']`, `$entry->stage->name` (shown as a purple badge), and `$entry->notes` (shown beneath the title in italics).
+- Updated `View →` link to safely use `$entry->record->module->slug` and `$entry->record_id` with null guards.
+- Updated `colspan` on empty state row from `3` to `4` to match the new column count.
 
 ---
 
-## Commit 5 — `0cb99419` | Jun 1, 2026
+## Commit 5 — `40b1335f` | Jun 03, 2026
 
-### Refactor: Encapsulate Notification Processing Logic
+### Feature: Enforce Proponent Ownership — Read-Only for Non-Owner Proposals
 
 **Files changed:**
-- `app/Http/Controllers/NotificationController.php` — new (50 lines)
-- `routes/web.php` — 25 lines removed, 21 lines added, inline closures removed
+- `prms/app/Livewire/Builder/Dashboard.php` — 8 lines changed
+- `prms/app/Livewire/Builder/DynamicRecordForm.php` — 2 lines changed
+- `prms/app/Livewire/Builder/DynamicRecordIndex.php` — 13 lines changed
+- `prms/app/Livewire/Builder/DynamicRecordShow.php` — 7 lines changed
+- `prms/app/Services/RecordApprovalService.php` — 19 lines changed
+- `prms/resources/views/livewire/builder/dynamic-record-index.blade.php` — 9 lines changed
 
 **What changed:**
 
-Extracted notification processing logic out of `routes/web.php` into a dedicated `NotificationController` controller. This allows the application to utilize route caching to maximize page performance (since route caching does not support inline closures). 
+Proponent-role users could previously edit or delete any record in the system as long as they held the `edit-{module}` or `delete-{module}` permission. This update enforces ownership: a Proponent may only modify records they originally created. All other Proponent users receive read-only access.
 
-Specifically:
-- Created `NotificationController@markRead` to mark a specific notification as read.
-- Created `NotificationController@markAllRead` to mark all user notifications as read.
-- Created `NotificationController@open` to mark a notification as read and securely redirect the user to the corresponding record and module page.
-- Cleared three inline closures in the routes file and mapped routes directly to the controller methods.
+**Access control matrix (post-fix):**
 
----
+| Role | View | Edit own | Edit others | Delete own | Delete others |
+|------|------|----------|-------------|------------|---------------|
+| Proponent | ✓ | ✓ | ✗ | ✓ | ✗ |
+| TRC Secretariat | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Super Admin | ✓ | ✓ | ✓ | ✓ | ✓ |
 
-## Commit 6 — `b3894b04` | Jun 1, 2026
+**`RecordApprovalService::canEditRecord()`:**
+- Added optional `?Record $record` parameter to the method signature.
+- Proponents who pass the `can("edit-{slug}")` check are now additionally checked against `$record->created_by !== $user->id` — returns `false` if they do not own the record.
+- Privileged roles (`super admin`, `TRC Secretariat`) bypass the ownership check entirely.
 
-### Merge: Synchronize branch 'general-refinement'
+**`DynamicRecordForm::mount()`:**
+- Passes `$this->record` (the loaded record object) to `canEditRecord()` — server-side 403 is now thrown if a non-owner Proponent navigates to the edit URL directly.
 
-**What changed:**
+**`DynamicRecordIndex::deleteRecord()`:**
+- After confirming `can("delete-{slug}")`, checks `$record->created_by !== auth()->id()` for Proponent role — aborts 403 for non-owners even if they hold the delete permission.
 
-Merge commit synchronizing local branch with remote repository changes.
+**`DynamicRecordIndex::render()`:**
+- Added `$isProponent = $user->hasRole('Proponent') && !$user->hasRole('super admin')` passed to the view.
 
----
+**`dynamic-record-index.blade.php`:**
+- Computes per-row `$isOwner = $rec->created_by === auth()->id()` and derives `$canEditThis` / `$canDeleteThis` with the ownership gate applied.
+- Edit and Delete buttons are now conditionally hidden per row for non-owner Proponents.
 
-## Commit 7 — `1fe0e1c0` | Jun 1, 2026
+**`DynamicRecordShow::render()`:**
+- Added `$isOwner = $this->record->created_by === $user->id`.
+- `$canEdit` now includes `(!$user->hasRole('Proponent') || $user->hasRole('super admin') || $isOwner)` — the Edit button in the header is hidden for non-owner Proponents.
 
-### Refactor: Remove Unused Configuration Files
-
-**Files changed:**
-- `Refactor DynamicRecordForm` — deleted (38 lines)
-
-**What changed:**
-
-Removed the redundant `Refactor DynamicRecordForm` plain-text notes file from the repository root to clean up unused documentation.
-
----
-
-## Commit 8 — `58b0ab0e` | Jun 1, 2026
-
-### Docs: Minor README Update
-
-**Files changed:**
-- `README.md` — 1 line added
-
-**What changed:**
-
-Added minor details to the project documentation `README.md` file.
-
----
-
-## Commit 9 — `b4bc49ad` | Jun 1, 2026
-
-### Feature: Prevent Premature Workflow Advancement for Multiple Reviewers
-
-**Files changed:**
-- `app/Livewire/Builder/DynamicRecordForm.php` — 16 lines added, 1 line removed
-- `app/Livewire/Builder/DynamicRecordIndex.php` — 11 lines added, 1 line removed
-- `app/Livewire/Builder/DynamicRecordShow.php` — 46 lines added, 3 lines removed
-- `app/Services/RecordApprovalService.php` — 48 lines added, 4 lines removed
-- `phpunit.xml` — 2 lines added
-
-**What changed:**
-
-Implemented logic to prevent the workflow from advancing prematurely when multiple reviewers are assigned. In standard review stages, if there are multiple users designated under the stage's `approver_role_id`, the system now counts these users and ensures that all of them must submit their feedback (e.g. approve or forward to branch) before the workflow proceeds to the next stage.
-
-Specifically:
-- **`RecordApprovalService`**: Modified `approve()` and `forwardToBranch()` methods to take an `$autoAdvance` flag, perform the reviewer completeness calculation, and return a boolean indicating whether the record actually advanced.
-- **`DynamicRecordShow` / `DynamicRecordForm`**: Updated to handle the service return value and show a successful flash notification (`Review submitted / forwarded. Waiting for other reviewers.`) in the UI when further reviews are still pending, rather than prematurely clearing the queue or advancing stages.
-- **`phpunit.xml`**: Configured `VIEW_COMPILED_PATH` (`storage/framework/testing/views`) to prevent Windows file locking issues ("Access is denied") during local test suites.
-
----
-
-## Commit 10 — `3f34a4b0` | Jun 1, 2026
-
-### Merge: Synchronize branch 'general-refinement'
-
-**What changed:**
-
-Merge commit synchronizing local branch with remote repository changes.
-
----
-
-## Commit 11 — `1e35db1e` | Jun 2, 2026
-
-### Feature: Hocuspocus Server Refinements and Dynamic Record UI Fixes
-
-**Files changed:**
-- `prms/.gitignore` — 10 lines added
-- `prms/hocuspocus/server.js` — 6 lines changed
-- `prms/resources/views/livewire/builder/dynamic-record-form.blade.php` — 1 line changed
-- `prms/resources/views/livewire/builder/dynamic-record-index.blade.php` — 1 line changed
-- `prms/resources/views/livewire/builder/dynamic-record-show.blade.php` — 1 line changed
-
-**What changed:**
-
-**Hocuspocus collaboration server (`hocuspocus/server.js`):**
-- Replaced `||` (logical OR) with `??` (nullish coalescing operator) for all environment variable defaults — more precise behavior since it only falls back when the value is `null` or `undefined`, not when it's an empty string.
-- Changed the default DB password fallback from `'secret'` to `''` (empty string) to avoid accidental default credentials in new environments.
-- Removed the hardcoded `'jea_'` default table prefix — `TABLE_PREFIX` now defaults to an empty string, fully driven by the `DB_PREFIX` env variable.
-
-**`.gitignore` additions:**
-- Added `**/node_modules` to catch nested `node_modules` directories (e.g., inside `hocuspocus/`).
-- Added `hocuspocus/package-lock.json` to keep the lock file out of version control.
-- Added glob patterns for temporary/debug scripts: `tmp_*.php`, `tmp_*.js`, `tmp_*.mjs`, `tmp_*.ts`.
-
-**Dynamic record UI fixes:**
-- **`dynamic-record-form.blade.php` / `dynamic-record-show.blade.php`**: `text_editor` field type now always renders with `md:col-span-2` (full width), regardless of whether `col_span` is set to `2` in the field configuration. Previously, only fields with `col_span = 2` got the wide layout — rich text editor fields were incorrectly rendered at half width.
-- **`dynamic-record-index.blade.php`**: Fixed value rendering for array-type field values (e.g., file attachment fields) in the index table. The display now:
-  1. Tries to extract `original_name` from each array item (for file objects).
-  2. Falls back to imploding the raw array values if no `original_name` key exists.
-  3. Falls back to `'-'` if the array is empty.
-
----
-
-## Commit 12 — `b11a34aa` | Jun 2, 2026
-
-### Security: Hardening, Text Editor Memory-Leak Fixes & WebSocket Protocol Fix
-
-**Files changed:**
-- `prms/app/Console/Commands/SendDateFieldReminders.php` — 4 lines added
-- `prms/app/Http/Controllers/Api/DynamicApiController.php` — 3 lines added
-- `prms/app/Http/Controllers/DynamicRecordController.php` — 19 lines added, 4 lines removed
-- `prms/app/Http/Controllers/TextEditorController.php` — 2 lines added
-- `prms/app/Livewire/Admin/UserManagement.php` — 1 line added
-- `prms/app/Livewire/Builder/DynamicRecordShow.php` — 10 lines added, 5 lines removed
-- `prms/hocuspocus/server.js` — 3 lines added
-- `prms/resources/js/text-editor.js` — 33 lines added, 8 lines removed
-- `prms/resources/views/livewire/builder/module-form.blade.php` — 2 lines changed
-
-**What changed:**
-
-**Security fixes:**
-- **`SendDateFieldReminders` / `DynamicApiController`**: Added `preg_match` alphanumeric allow-list validation on field slugs before embedding them in `JSON_EXTRACT` raw SQL — prevents SQL injection via malformed module field slugs.
-- **`DynamicRecordController::exportCsv`**: Added a `sanitizeCsvCell()` helper that prefixes cells starting with `=`, `+`, `-`, `@`, tab, or carriage return with a single quote — prevents CSV formula injection when exported files are opened in spreadsheet applications.
-- **`TextEditorController::storeHistory`**: Added `authorizeRecordAccess()` guard at the top of the method before any validation — the history write endpoint previously had no ownership check.
-- **`module-form.blade.php`**: Replaced raw `{!! $options_raw_template !!}` output with a sandboxed `<iframe srcdoc="...">` — eliminates stored XSS from admin-supplied HTML templates.
-
-**Collaborative editor reliability fixes:**
-- **`text-editor.js`**: WebSocket URL now upgrades to `wss://` when the page is served over HTTPS instead of always using `ws://` — fixes silent connection failures in production SSL environments.
-- **`text-editor.js`**: The three anonymous `document` event listeners registered during editor init (image click-outside, toolbar mousedown, comment mousedown) are now stored as named references (`_docMousedownToolbarHandler`, `_docMousedownCommentHandler`) and explicitly removed in `destroy()` — prevents event listener accumulation across Livewire re-renders.
-- **`text-editor.js`**: `awarenessChange` listener moved from the per-sync `onSynced` status callback to the provider init block — was previously re-registered on every document sync, leaking handlers over time.
-- **`hocuspocus/server.js`**: `onAuthenticate` error handler now only logs unexpected errors; normal `Unauthorized` rejections are silently re-thrown — keeps server logs clean during routine auth failures.
-
-**Refactor:**
-- **`DynamicRecordShow`**: Editor token minting in the Livewire re-hydration path is now delegated to `TokenMintingService::mintEditorTokens()` — removes the last inline token-creation loop from a Livewire component.
+**`Dashboard::getScopedRecordQuery()`:**
+- Added `$user->hasRole('Proponent')` to the privileged-role bypass — Proponents now see all records in the dashboard KPI counts, status chart, trend chart, module stats, and recent activity (consistent with the unscoped TRC schedule table). The `my_records_only` restriction continues to apply only at the module record-list level.
 
 ---
 
 ## Summary of All Files Changed
 
 | File | Change |
-|---|---|
-| `README.md` | New — root project documentation file |
-| `prms/.gitignore` | Updated — added nested node_modules, Hocuspocus package-lock.json, and temp script glob patterns |
-| `prms/README.md` | New — custom PRMS project documentation file |
-| `prms/app/Http/Controllers/NotificationController.php` | New — encapsulating route notification handlers |
-| `prms/app/Livewire/Builder/Dashboard.php` | Updated — account-scoped stat queries |
-| `prms/app/Livewire/Builder/DynamicRecordForm.php` | Refactored — business logic delegated to services; handles reviewer completeness feedback; `text_editor` fields always full-width |
-| `prms/app/Livewire/Builder/DynamicRecordIndex.php` | Updated — custom policies proposals role filtering; array field values rendered correctly in index table |
-| `prms/app/Livewire/Builder/DynamicRecordShow.php` | Updated — reviewer count verification; `text_editor` fields always full-width |
-| `prms/app/Services/RecordApprovalService.php` | New — approval workflow logic; implements reviewer completeness checking |
-| `prms/app/Services/RecordCommentService.php` | New — comment creation/deletion |
-| `prms/app/Services/RecordSaveService.php` | New — record save and file upload logic |
-| `prms/app/Services/TokenMintingService.php` | New — editor token management |
-| `prms/hocuspocus/server.js` | Updated — refined env var defaults using nullish coalescing; removed hardcoded table prefix and default password; improved auth error logging |
-| `prms/phpunit.xml` | Updated — added unique testing compiled views path for concurrent local test runs |
-| `prms/public/storage/.gitignore` | New — gitignore for storage symlink |
-| `prms/routes/web.php` | Updated — removed three inline closures and mapped to NotificationController to maximize route caching performance |
-| `prms/app/Console/Commands/SendDateFieldReminders.php` | Updated — added field slug allow-list validation to prevent SQL injection in raw queries |
-| `prms/app/Http/Controllers/Api/DynamicApiController.php` | Updated — added field slug allow-list validation before JSON_EXTRACT raw SQL |
-| `prms/app/Http/Controllers/DynamicRecordController.php` | Updated — added sanitizeCsvCell() to prevent CSV formula injection on export |
-| `prms/app/Http/Controllers/TextEditorController.php` | Updated — added authorizeRecordAccess() guard to storeHistory endpoint |
-| `prms/app/Livewire/Admin/UserManagement.php` | Updated — added TODO note for unbounded user query pagination |
-| `prms/resources/js/text-editor.js` | Updated — WebSocket wss:// protocol fix; event listener memory-leak fixes; awarenessChange listener moved to init |
-| `prms/resources/views/livewire/builder/module-form.blade.php` | Updated — replaced raw HTML output with sandboxed iframe to prevent stored XSS |
+|------|--------|
+| `prms/app/Livewire/Builder/Dashboard.php` | Updated — Proponent added to dashboard bypass; TRC schedule query replaced with `record_schedules` lookup |
+| `prms/app/Livewire/Builder/DynamicRecordForm.php` | Updated — passes `$record` to `canEditRecord()` for server-side ownership enforcement |
+| `prms/app/Livewire/Builder/DynamicRecordIndex.php` | Updated — ownership check in `deleteRecord()`; `$isProponent` flag passed to view |
+| `prms/app/Livewire/Builder/DynamicRecordShow.php` | Updated — `$editorTokens` visibility + `Locked` attribute fix; Proponent ownership gate on `$canEdit`; token minting delegated to `TokenMintingService` |
+| `prms/app/Livewire/Builder/RecordScheduler.php` | New — Livewire component for TRC/Ad Referendum meeting schedule management |
+| `prms/app/Models/RecordSchedule.php` | New — Eloquent model for `record_schedules` table |
+| `prms/app/Services/RecordApprovalService.php` | Updated — `canEditRecord()` accepts `?Record` and enforces Proponent ownership |
+| `prms/app/Services/TokenMintingService.php` | Updated — per-field delete-then-recreate strategy; preserves concurrent session tokens |
+| `prms/database/migrations/2026_06_03_000001_create_record_schedules_table.php` | New — creates `record_schedules` table |
+| `prms/hocuspocus/server.js` | Updated — automatic `.env` loader; expanded `onAuthenticate` diagnostics; separate network/parse error handling |
+| `prms/resources/js/text-editor.js` | Updated — three-tier `WS_URL` resolution (`window.HOCUSPOCUS_URL` → `VITE_HOCUSPOCUS_URL` → hostname fallback) |
+| `prms/resources/views/livewire/builder/dashboard.blade.php` | Updated — TRC schedule table uses `record_schedules` fields; added Stage column and time display |
+| `prms/resources/views/livewire/builder/dynamic-record-index.blade.php` | Updated — per-row Edit/Delete visibility gate for Proponent ownership |
+| `prms/resources/views/livewire/builder/dynamic-record-show.blade.php` | Updated — `RecordScheduler` component injected after Approval Log |
+| `prms/resources/views/livewire/builder/record-scheduler.blade.php` | New — scheduling panel UI: current schedule display, date/time form, schedule history log |
