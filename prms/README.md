@@ -1,320 +1,225 @@
-# PRMS — Policy Record Management System
+# Branch: `feature_TRC-Scheduling` — Changes vs `main`
 
-A dynamic, low-code record management and workflow approval platform built on the **TALL stack** (Tailwind CSS, Alpine.js, Laravel, Livewire). PRMS lets administrators define custom data modules (forms/tables) and route submitted records through multi-stage approval workflows — without writing code for each new form type.
-
----
-
-## Table of Contents
-
-- [Features](#features)
-- [Tech Stack](#tech-stack)
-- [Architecture Overview](#architecture-overview)
-- [Project Structure](#project-structure)
-- [Getting Started](#getting-started)
-  - [Docker (Recommended)](#docker-recommended)
-  - [Local Development](#local-development)
-- [Environment Variables](#environment-variables)
-- [Key Modules](#key-modules)
-- [Workflow Engine](#workflow-engine)
-- [Collaborative Text Editor](#collaborative-text-editor)
-- [Authentication & Authorization](#authentication--authorization)
-- [Scheduled Tasks](#scheduled-tasks)
-- [API & Webhooks](#api--webhooks)
+**Branch:** `feature_TRC-Scheduling`
+**Author:** KIMS-MGA
+**Total Changes:** 16 files changed, 589 insertions(+), 74 deletions(-)
 
 ---
 
-## Features
+## Commits Overview
 
-| Feature | Description |
-|---|---|
-| **Dynamic Module Builder** | Create custom forms and data tables at runtime without writing code |
-| **Multi-Stage Approval Workflows** | Linear and branching approval pipelines with per-stage role assignment |
-| **Collaborative Text Editor** | Real-time multi-user rich text editing powered by TipTap + Yjs |
-| **Approval Queue** | Centralized inbox for reviewers to act on pending records |
-| **Audit Log** | Full history of every action taken on every record |
-| **Webhook Manager** | Send outgoing HTTP payloads to external systems on record events |
-| **API Manager** | Token-based external API access to module records |
-| **Notification Center** | In-app and email notifications at each workflow stage transition |
-| **Role-Based Access Control** | Fine-grained permissions per module (create, edit, approve, review) |
-| **Two-Factor Authentication** | TOTP-based 2FA via Google Authenticator |
-| **Google OAuth Login** | Sign in with Google via Laravel Socialite |
-| **CSV Export** | Export any module's records to CSV |
-| **Login Slide Manager** | Dynamically manage the images shown on the login screen |
-| **Auto-Advance Deadlines** | Automatically advance stalled records after a working-day deadline |
+| # | Hash | Date | Message |
+|---|------|------|---------|
+| 1 | `0c228c64` | Jun 03, 2026 | Fix collaborative editor: Hocuspocus not syncing between users (Offline status) |
+| 2 | `821edc05` | Jun 03, 2026 | Collaborative Text Editor - Debugging & Fix |
+| 3 | `dc5dac51` | Jun 03, 2026 | Add TRC/Ad Referendum meeting schedule module |
+| 4 | `5f557ae7` | Jun 03, 2026 | Fix Dashboard TRC Schedule to read from record_schedules table |
+| 5 | `40b1335f` | Jun 03, 2026 | Enforce Proponent ownership: read-only for non-owner proposals |
 
 ---
 
-## Tech Stack
+## Commit 1 — `0c228c64` | Jun 03, 2026
 
-| Layer | Technology |
-|---|---|
-| **Backend** | Laravel 13, PHP 8.3 |
-| **Frontend** | Livewire 3, Livewire Volt, Tailwind CSS 4, Alpine.js |
-| **Database** | MySQL 8.4 |
-| **Real-time Collaboration** | TipTap 2, Yjs, Hocuspocus (Node.js WebSocket server) |
-| **Authentication** | Laravel Sanctum, Spatie Laravel Permission, Laravel Socialite, Google2FA |
-| **Mail** | Resend (`resend/resend-laravel`) |
-| **Document I/O** | `docx`, `mammoth` (Word document generation and parsing) |
-| **Build Tool** | Vite 8 |
-| **Infrastructure** | Docker, Nginx, Laravel Queue Worker, Laravel Scheduler |
+### Fix: Hocuspocus Collaborative Editor Not Syncing (Offline Status)
 
----
+**Files changed:**
+- `prms/app/Livewire/Builder/DynamicRecordShow.php` — 18 lines changed
+- `prms/app/Services/TokenMintingService.php` — 32 lines changed
+- `prms/hocuspocus/server.js` — 41 lines added
+- `prms/resources/js/text-editor.js` — 9 lines changed
 
-## Architecture Overview
+**What changed:**
 
-```
-Browser
-  │
-  ├── HTTP ──► Nginx (port 8080) ──► Laravel App (PHP-FPM)
-  │                                        │
-  │                                        ├── MySQL 8.4
-  │                                        ├── Queue Worker (background jobs)
-  │                                        └── Scheduler (cron every 60s)
-  │
-  └── WebSocket ──► Hocuspocus (port 1234) ──► MySQL 8.4
-                    (collaborative editing)
-```
+The collaborative text editor was displaying "Offline" status for concurrent users because the previous token minting strategy deleted **all** tokens for a given record prefix whenever any user loaded the show page — revoking tokens still being actively used by other browser sessions.
 
-The application uses a **dynamic record architecture**: instead of a separate database table for every form type, a generic `Module` + `Record` model pair stores all data. Each `Module` defines its schema via `ModuleField` records, and each `Record` stores its field values as JSON. This allows administrators to create new "application modules" entirely through the UI.
+**`TokenMintingService.php`:**
+- Changed from "delete all tokens for this prefix" to "delete only **expired** tokens (older than 8 hours) for this prefix" — preserves live tokens from concurrent collaborative sessions.
+- Added detection of existing valid tokens via `pluck('name')->flip()` before issuing new ones.
+- Switched to an explicit **delete-then-recreate** strategy per individual field token: since Sanctum only stores the hash (not the raw token), a fresh plain-text token must always be issued for the Blade view — but only the targeted field token is revoked, not all tokens.
 
----
+**`DynamicRecordShow.php`:**
+- Removed inline token minting loop from `mount()`.
+- Delegated entirely to `TokenMintingService::mintEditorTokens()` — consistent with the safe per-field strategy.
 
-## Project Structure
+**`hocuspocus/server.js`:**
+- Added automatic `.env` loader at startup: reads the Laravel project's `.env` file one directory up and injects unset environment variables into `process.env`. Fixes the silent DB/API connection failures when the Node process is started without explicit env injection (e.g. `node server.js` locally).
+- Updated MySQL pool to support `DB_USERNAME` (Laravel convention) as well as `DB_USER` for compatibility.
+- Changed `DB_HOST` default from `'mysql'` to `'127.0.0.1'` and `APP_URL` from `'http://app'` to `'http://localhost'` to match local development environments.
+- Added explicit `DB_PORT` support.
 
-```
-prms/
-├── app/
-│   ├── Console/Commands/
-│   │   ├── AdvanceDeadlineStages.php   # Auto-advance records past stage deadlines
-│   │   └── SendDateFieldReminders.php  # Email reminders for date-type fields
-│   ├── Events/
-│   │   └── RecordSaved.php             # Fired after a record is saved
-│   ├── Http/
-│   │   ├── Controllers/
-│   │   │   ├── Api/DynamicApiController.php      # REST API for external consumers
-│   │   │   ├── Auth/SocialController.php         # Google OAuth callback
-│   │   │   ├── DynamicRecordController.php       # CSV export
-│   │   │   └── TextEditorController.php          # Collaborative editor endpoints
-│   │   └── Middleware/
-│   │       ├── EnsureUserIsActive.php            # Block deactivated accounts
-│   │       └── RequireTwoFactor.php              # Enforce 2FA completion
-│   ├── Livewire/
-│   │   ├── Admin/
-│   │   │   ├── LoginSlideManager.php   # Manage login screen slides
-│   │   │   ├── RoleManagement.php      # Create/assign roles and permissions
-│   │   │   └── UserManagement.php      # Activate/deactivate users, assign roles
-│   │   └── Builder/
-│   │       ├── ApiManager.php          # Manage API tokens
-│   │       ├── ApprovalQueue.php       # Reviewer inbox for pending records
-│   │       ├── AuditLog.php            # View record change history
-│   │       ├── Dashboard.php           # Stats and summary cards
-│   │       ├── DynamicRecordForm.php   # Create/edit records for any module
-│   │       ├── DynamicRecordIndex.php  # List/search/filter records
-│   │       ├── DynamicRecordShow.php   # View a record with approval actions
-│   │       ├── ModuleForm.php          # Build or edit a module's fields
-│   │       ├── ModuleIndex.php         # List all modules
-│   │       ├── NotificationCenter.php  # In-app notification list
-│   │       ├── WebhookManager.php      # Configure outgoing webhooks
-│   │       ├── WorkflowManager.php     # Define workflow stages per module
-│   │       └── WorkflowStageManager.php# Configure individual stage settings
-│   ├── Models/
-│   │   ├── Module.php                  # Dynamic form definition
-│   │   ├── ModuleField.php             # Field schema for a Module
-│   │   ├── Record.php                  # A single data entry for a Module
-│   │   ├── RecordApproval.php          # Approval/rejection action log
-│   │   ├── RecordComment.php           # Inline comments on a record
-│   │   ├── RecordHistory.php           # Full audit trail per record
-│   │   ├── User.php                    # Extended with roles, 2FA, theme
-│   │   ├── Webhook.php / WebhookLog.php
-│   │   ├── Workflow.php
-│   │   ├── WorkflowAction.php
-│   │   ├── WorkflowStage.php           # A single approval stage
-│   │   └── WorkflowStageTemplate.php
-│   └── Services/
-│       ├── RecordApprovalService.php   # Submit, approve, return, branch logic
-│       ├── RecordCommentService.php    # Comment CRUD and permissions
-│       ├── RecordSaveService.php       # Field validation and record persistence
-│       └── TokenMintingService.php     # API token creation
-├── database/
-│   ├── migrations/                     # 30+ migrations covering all entities
-│   └── seeders/
-│       ├── SuperAdminSeeder.php        # Seeds the initial super admin user
-│       └── PolicyProposalsSeeder.php   # Sample module seeder
-├── docs/                               # Architecture and developer guides
-├── hocuspocus/                         # Node.js WebSocket server for collaborative editing
-│   ├── server.js
-│   ├── package.json
-│   └── Dockerfile
-├── docker/                             # Nginx and PHP runtime config
-├── docker-compose.yml                  # Full local environment definition
-├── Dockerfile                          # Laravel app container
-├── routes/
-│   ├── web.php                         # All web routes (auth, builder, dynamic app)
-│   ├── api.php                         # API routes (token-protected)
-│   └── auth.php                        # Breeze auth routes
-└── resources/
-    ├── js/
-    │   ├── app.js                      # Vite entry point
-    │   └── text-editor.js              # TipTap + Yjs collaborative editor init
-    └── views/                          # Blade layouts and profile page
-```
+**`text-editor.js`:**
+- `WS_URL` resolution now checks three sources in priority order:
+  1. `window.HOCUSPOCUS_URL` (set by Blade for multi-environment support)
+  2. `import.meta.env.VITE_HOCUSPOCUS_URL` (baked in at build time from `.env`)
+  3. Derived fallback from current hostname + port 1234
 
 ---
 
-## Getting Started
+## Commit 2 — `821edc05` | Jun 03, 2026
 
-### Docker (Recommended)
+### Fix: Collaborative Text Editor — Debugging & Editor Token Serialization
 
-**Prerequisites:** Docker Desktop
+**Files changed:**
+- `prms/app/Livewire/Builder/DynamicRecordShow.php` — 3 lines changed
+- `prms/hocuspocus/server.js` — 35 lines changed
 
-```bash
-# 1. Clone the repository
-git clone https://github.com/KIMS-MGA/PRMS_Dev.git
-cd PRMS_Dev/prms
+**What changed:**
 
-# 2. Copy environment file
-cp .env.example .env
+**`DynamicRecordShow.php`:**
+- Changed `$editorTokens` from `protected array` to `public array` with the `#[\Livewire\Attributes\Locked]` attribute. This allows Livewire to serialize the tokens in its encrypted snapshot (so they survive page re-hydration) while the `Locked` attribute prevents client-side mutation of the token values via Livewire's wire protocol.
 
-# 3. Build and start all services
-docker compose up -d --build
-
-# 4. Install dependencies and run migrations (inside the app container)
-docker compose exec app composer install
-docker compose exec app php artisan key:generate
-docker compose exec app php artisan migrate --seed
-docker compose exec app npm install
-docker compose exec app npm run build
-```
-
-The application will be available at **http://localhost:8080**.
-The Hocuspocus WebSocket server runs on **ws://localhost:1234**.
-
-### Local Development
-
-**Prerequisites:** PHP 8.3, Composer, Node.js 20+, MySQL 8
-
-```bash
-composer install
-cp .env.example .env
-php artisan key:generate
-
-# Configure DB_* variables in .env, then:
-php artisan migrate --seed
-npm install
-npm run dev
-
-# In a separate terminal, run the queue worker:
-php artisan queue:listen --tries=1 --timeout=0
-```
+**`hocuspocus/server.js`:**
+- Expanded `onAuthenticate` with detailed step-by-step diagnostic logging: logs the document name, first 8 characters of the token, the target validation URL, and the full HTTP response body (truncated to 300 chars).
+- Separated the network fetch from the response body parsing into two distinct `try/catch` blocks — previously, a network error and an auth rejection were handled by the same catch clause, making it impossible to distinguish between "Laravel is unreachable" and "Laravel rejected the token."
+- Changed body consumption from `res.json()` to `res.text()` followed by explicit `JSON.parse()` — ensures the raw response body is always captured for logging before any parse attempt.
+- Added explicit `console.error` for HTTP non-OK responses with the status code.
 
 ---
 
-## Environment Variables
+## Commit 3 — `dc5dac51` | Jun 03, 2026
 
-Key variables to configure in `.env`:
+### Feature: TRC/Ad Referendum Meeting Schedule Module
 
-| Variable | Description |
-|---|---|
-| `DB_HOST`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` | MySQL connection |
-| `MAIL_MAILER` | Set to `resend` for production email |
-| `RESEND_API_KEY` | API key from [resend.com](https://resend.com) |
-| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` | Google OAuth credentials |
-| `SANCTUM_STATEFUL_DOMAINS` | Domains allowed for cookie-based auth |
-| `QUEUE_CONNECTION` | Set to `database` for persistent job queues |
+**Files changed:**
+- `prms/app/Livewire/Builder/RecordScheduler.php` — new (173 lines)
+- `prms/app/Models/RecordSchedule.php` — new (29 lines)
+- `prms/database/migrations/2026_06_03_000001_create_record_schedules_table.php` — new (29 lines)
+- `prms/resources/views/livewire/builder/dynamic-record-show.blade.php` — 3 lines added
+- `prms/resources/views/livewire/builder/record-scheduler.blade.php` — new (128 lines)
 
----
+**What changed:**
 
-## Key Modules
+A new meeting schedule module was added to the proposal detail page, displayed in the right column after the Approval Log. The feature allows authorized users to schedule, reschedule, and cancel TRC or Ad Referendum meeting dates for proposals currently at those workflow stages.
 
-### Module Builder (`/builder/modules`)
-Administrators create **Modules** — each representing a custom data form. Fields can be typed as text, number, date, file upload, textarea, or rich text (collaborative editor). The field order and visibility in list views are configurable per field.
+**New database table — `record_schedules`:**
 
-### Dynamic Records (`/app/{moduleSlug}`)
-End users interact with records through auto-generated CRUD interfaces. The same Livewire components (`DynamicRecordIndex`, `DynamicRecordForm`, `DynamicRecordShow`) render differently depending on the module's field schema.
+| Column | Type | Description |
+|--------|------|-------------|
+| `record_id` | FK | Links to the proposal record |
+| `stage_id` | FK (nullable) | The workflow stage at time of scheduling |
+| `scheduled_by` | FK | User who created the schedule entry |
+| `scheduled_at` | datetime | The meeting date and time |
+| `notes` | text (nullable) | Optional location/link notes |
+| `action` | string | `scheduled` \| `rescheduled` \| `cancelled` |
 
-### Dashboard (`/dashboard`)
-Displays per-module record count statistics filtered by the authenticated user's accessible modules.
+**`RecordSchedule` model** (`app/Models/RecordSchedule.php`):
+- Belongs to `Record`, `WorkflowStage` (via `stage_id`), and `User` (via `scheduled_by` as `scheduler()`).
+- Casts `scheduled_at` as `datetime`.
 
----
+**`RecordScheduler` Livewire component** (`app/Livewire/Builder/RecordScheduler.php`):
+- Visibility: Panel only renders when `record->currentStage->name` is `TRC Deliberation` or `Ad Referendum Review` (or when schedule history already exists for the record).
+- **Role access**: `canSchedule()` returns `true` only for `TRC Secretariat` role or `super admin` — all other roles are read-only.
+- **`saveSchedule()`**: Validates date (`after_or_equal:today`), time (`H:i`), and optional notes. Determines `action` as `scheduled` or `rescheduled` based on whether a prior non-cancelled entry exists. Notifies all active users via `DynamicNotification` (database + email) on each save.
+- **`cancelSchedule()`**: Creates a new `cancelled` history row referencing the last active `scheduled_at`.
+- **`startEditing()` / `cancelEditing()`**: Toggle the inline form, pre-filling with the current active schedule.
+- **Schedule history**: All entries (scheduled, rescheduled, cancelled) are displayed in reverse chronological order with actor name, meeting date/time, and notes.
 
-## Workflow Engine
+**`record-scheduler.blade.php`** (view):
+- Root `<div>` is always rendered (satisfies Livewire's single-root-tag requirement); the panel is hidden via `style="display:none"` when neither condition applies.
+- Shows the current scheduled date/time in a purple-accented card.
+- Editable form with date, time, and notes fields, plus a Reschedule / Cancel Schedule button pair for authorized users.
+- Schedule history log at the bottom of the panel.
 
-Each module can have a multi-stage approval workflow configured at `/builder/workflows/{module}`.
-
-**Record lifecycle:**
-```
-Draft → Submitted → [Stage 1] → [Stage 2] → ... → Completed
-                        ↓ (returned)
-                     Returned → (resubmit)
-```
-
-**Stage capabilities:**
-- Assign an **approver role** per stage
-- Configure **branching** (forward to one of several downstream stages)
-- Set a **working-day deadline** for auto-advance if no action is taken
-- Allow **editing** of the record at a specific stage
-- Configure **who gets notified** on stage entry (submitter, role, specific user, or external email)
-- Mark a stage as **final approval**
-
-Actions: **Approve**, **Return for Revision**, **Forward to Branch**.
+**`dynamic-record-show.blade.php`:**
+- Added `<livewire:builder.record-scheduler :record-id="$record->id" :module-slug="$moduleSlug" />` in the right column between the Approval Log and the Remarks section.
 
 ---
 
-## Collaborative Text Editor
+## Commit 4 — `5f557ae7` | Jun 03, 2026
 
-Records with rich-text fields open a TipTap editor backed by **Yjs CRDT** for conflict-free real-time collaboration. A dedicated **Hocuspocus** Node.js server manages WebSocket connections and persists document state to MySQL.
+### Fix: Dashboard TRC Schedule Table Reading from `record_schedules`
 
-Features:
-- Live multi-cursor presence
-- Inline reviewer comments
-- "Mark Review Done" per reviewer — auto-advances the record when all assigned reviewers complete their review
-- Export to `.docx`
+**Files changed:**
+- `prms/app/Livewire/Builder/Dashboard.php` — 20 lines changed
+- `prms/resources/views/livewire/builder/dashboard.blade.php` — 39 lines changed
 
----
+**What changed:**
 
-## Authentication & Authorization
+The "Upcoming TRC Schedule" table on the Dashboard was reading from `record.data['date_scheduled']` — a legacy JSON field approach — while the new scheduler writes to the `record_schedules` table. The two systems were disconnected, so newly saved schedules never appeared on the Dashboard.
 
-| Mechanism | Implementation |
-|---|---|
-| **Standard login** | Laravel Breeze (email + password) |
-| **Google OAuth** | Laravel Socialite → `SocialController` |
-| **Two-Factor Auth** | `pragmarx/google2fa` + `bacon/bacon-qr-code` (TOTP) |
-| **Roles & Permissions** | `spatie/laravel-permission` |
-| **API tokens** | Laravel Sanctum |
-| **Account activation** | `EnsureUserIsActive` middleware — inactive users are rejected |
+**`Dashboard.php`:**
+- Removed the `whereRaw("JSON_UNQUOTE(JSON_EXTRACT(data, '$.date_scheduled')) IS NOT NULL")` query.
+- Replaced with a `RecordSchedule` query using `MAX(id)` per `record_id` to identify the most recently inserted row for each record (auto-increment guarantees this is the latest entry).
+- Filters out entries where `action = 'cancelled'` — cancelled schedules are excluded from the table.
+- Applies the `showPastTrc` toggle via `where('scheduled_at', '>=', now()->startOfDay())`.
+- Eager-loads `record.module`, `stage`, and `scheduler` relations for display.
+- Added `use App\Models\RecordSchedule;` import.
 
-**Built-in roles:** `super admin` (full access). All other roles are created by admins and assigned module-level permissions such as `create-{module}`, `edit-{module}`, `approve-{module}`, and `review-{module}`.
-
----
-
-## Scheduled Tasks
-
-Two Artisan commands run on the scheduler:
-
-| Command | Schedule | Purpose |
-|---|---|---|
-| `prms:advance-deadline-stages` | Daily | Auto-advance (or auto-approve) records whose current stage has exceeded its working-day deadline |
-| `prms:send-date-field-reminders` | Daily | Send email reminders to relevant users when a date-type field on a record is approaching |
+**`dashboard.blade.php`:**
+- Updated table headers: replaced `Date Scheduled` with `Date & Time`; added `Stage` column.
+- Updated row rendering to use `$entry->scheduled_at` (full datetime with time displayed separately), `$entry->record->data['title']`, `$entry->stage->name` (shown as a purple badge), and `$entry->notes` (shown beneath the title in italics).
+- Updated `View →` link to safely use `$entry->record->module->slug` and `$entry->record_id` with null guards.
+- Updated `colspan` on empty state row from `3` to `4` to match the new column count.
 
 ---
 
-## API & Webhooks
+## Commit 5 — `40b1335f` | Jun 03, 2026
 
-### REST API (`/api/...`)
-External systems can read and create records via token-authenticated API endpoints managed by `DynamicApiController`. Tokens are issued through the **API Manager** UI (`/builder/api-manager`).
+### Feature: Enforce Proponent Ownership — Read-Only for Non-Owner Proposals
 
-### Webhooks (`/builder/webhooks`)
-Configure outgoing HTTP POST webhooks that fire when records are created, updated, or transition through workflow stages. Each webhook call is logged in `webhook_logs` for debugging.
+**Files changed:**
+- `prms/app/Livewire/Builder/Dashboard.php` — 8 lines changed
+- `prms/app/Livewire/Builder/DynamicRecordForm.php` — 2 lines changed
+- `prms/app/Livewire/Builder/DynamicRecordIndex.php` — 13 lines changed
+- `prms/app/Livewire/Builder/DynamicRecordShow.php` — 7 lines changed
+- `prms/app/Services/RecordApprovalService.php` — 19 lines changed
+- `prms/resources/views/livewire/builder/dynamic-record-index.blade.php` — 9 lines changed
+
+**What changed:**
+
+Proponent-role users could previously edit or delete any record in the system as long as they held the `edit-{module}` or `delete-{module}` permission. This update enforces ownership: a Proponent may only modify records they originally created. All other Proponent users receive read-only access.
+
+**Access control matrix (post-fix):**
+
+| Role | View | Edit own | Edit others | Delete own | Delete others |
+|------|------|----------|-------------|------------|---------------|
+| Proponent | ✓ | ✓ | ✗ | ✓ | ✗ |
+| TRC Secretariat | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Super Admin | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+**`RecordApprovalService::canEditRecord()`:**
+- Added optional `?Record $record` parameter to the method signature.
+- Proponents who pass the `can("edit-{slug}")` check are now additionally checked against `$record->created_by !== $user->id` — returns `false` if they do not own the record.
+- Privileged roles (`super admin`, `TRC Secretariat`) bypass the ownership check entirely.
+
+**`DynamicRecordForm::mount()`:**
+- Passes `$this->record` (the loaded record object) to `canEditRecord()` — server-side 403 is now thrown if a non-owner Proponent navigates to the edit URL directly.
+
+**`DynamicRecordIndex::deleteRecord()`:**
+- After confirming `can("delete-{slug}")`, checks `$record->created_by !== auth()->id()` for Proponent role — aborts 403 for non-owners even if they hold the delete permission.
+
+**`DynamicRecordIndex::render()`:**
+- Added `$isProponent = $user->hasRole('Proponent') && !$user->hasRole('super admin')` passed to the view.
+
+**`dynamic-record-index.blade.php`:**
+- Computes per-row `$isOwner = $rec->created_by === auth()->id()` and derives `$canEditThis` / `$canDeleteThis` with the ownership gate applied.
+- Edit and Delete buttons are now conditionally hidden per row for non-owner Proponents.
+
+**`DynamicRecordShow::render()`:**
+- Added `$isOwner = $this->record->created_by === $user->id`.
+- `$canEdit` now includes `(!$user->hasRole('Proponent') || $user->hasRole('super admin') || $isOwner)` — the Edit button in the header is hidden for non-owner Proponents.
+
+**`Dashboard::getScopedRecordQuery()`:**
+- Added `$user->hasRole('Proponent')` to the privileged-role bypass — Proponents now see all records in the dashboard KPI counts, status chart, trend chart, module stats, and recent activity (consistent with the unscoped TRC schedule table). The `my_records_only` restriction continues to apply only at the module record-list level.
 
 ---
 
-## Branch: `general-refinement`
+## Summary of All Files Changed
 
-This branch contains a major refactor of the `DynamicRecordForm` Livewire component. Its previously monolithic business logic has been extracted into dedicated service classes:
-
-- `RecordSaveService` — field validation and record persistence
-- `RecordApprovalService` — submit, approve, return, branch, and review-done logic
-- `RecordCommentService` — inline comment management
-- `TokenMintingService` — API token issuance
-
-Additionally, this branch introduces per-module record count statistics restricted to the authenticated account on the Dashboard.
+| File | Change |
+|------|--------|
+| `prms/app/Livewire/Builder/Dashboard.php` | Updated — Proponent added to dashboard bypass; TRC schedule query replaced with `record_schedules` lookup |
+| `prms/app/Livewire/Builder/DynamicRecordForm.php` | Updated — passes `$record` to `canEditRecord()` for server-side ownership enforcement |
+| `prms/app/Livewire/Builder/DynamicRecordIndex.php` | Updated — ownership check in `deleteRecord()`; `$isProponent` flag passed to view |
+| `prms/app/Livewire/Builder/DynamicRecordShow.php` | Updated — `$editorTokens` visibility + `Locked` attribute fix; Proponent ownership gate on `$canEdit`; token minting delegated to `TokenMintingService` |
+| `prms/app/Livewire/Builder/RecordScheduler.php` | New — Livewire component for TRC/Ad Referendum meeting schedule management |
+| `prms/app/Models/RecordSchedule.php` | New — Eloquent model for `record_schedules` table |
+| `prms/app/Services/RecordApprovalService.php` | Updated — `canEditRecord()` accepts `?Record` and enforces Proponent ownership |
+| `prms/app/Services/TokenMintingService.php` | Updated — per-field delete-then-recreate strategy; preserves concurrent session tokens |
+| `prms/database/migrations/2026_06_03_000001_create_record_schedules_table.php` | New — creates `record_schedules` table |
+| `prms/hocuspocus/server.js` | Updated — automatic `.env` loader; expanded `onAuthenticate` diagnostics; separate network/parse error handling |
+| `prms/resources/js/text-editor.js` | Updated — three-tier `WS_URL` resolution (`window.HOCUSPOCUS_URL` → `VITE_HOCUSPOCUS_URL` → hostname fallback) |
+| `prms/resources/views/livewire/builder/dashboard.blade.php` | Updated — TRC schedule table uses `record_schedules` fields; added Stage column and time display |
+| `prms/resources/views/livewire/builder/dynamic-record-index.blade.php` | Updated — per-row Edit/Delete visibility gate for Proponent ownership |
+| `prms/resources/views/livewire/builder/dynamic-record-show.blade.php` | Updated — `RecordScheduler` component injected after Approval Log |
+| `prms/resources/views/livewire/builder/record-scheduler.blade.php` | New — scheduling panel UI: current schedule display, date/time form, schedule history log |
