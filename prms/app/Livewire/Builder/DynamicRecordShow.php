@@ -78,12 +78,14 @@ class DynamicRecordShow extends Component
 
         $currentStage = $this->record->currentStage;
 
+        // Mark this reviewer's individual decision with a finalization timestamp.
         RecordApproval::create([
-            'record_id' => $this->record->id,
-            'stage_id'  => $currentStage?->id,
-            'user_id'   => auth()->id(),
-            'action'    => 'approved',
-            'comment'   => $this->approvalComment ?: null,
+            'record_id'   => $this->record->id,
+            'stage_id'    => $currentStage?->id,
+            'user_id'     => auth()->id(),
+            'action'      => 'approved',
+            'comment'     => $this->approvalComment ?: null,
+            'reviewed_at' => now(),
         ]);
 
         RecordHistory::create([
@@ -93,20 +95,10 @@ class DynamicRecordShow extends Component
             'changes_json' => $this->approvalComment ? ['comment' => $this->approvalComment] : null,
         ]);
 
+        // For review-type stages, wait until every assigned reviewer has submitted
+        // their individual decision before advancing the record globally.
         if (!$autoAdvance && $currentStage && $currentStage->stage_type === 'review') {
-            $reviewerCount = 0;
-            if ($currentStage->approver_role_id) {
-                $role = Role::find($currentStage->approver_role_id);
-                if ($role) $reviewerCount = User::role($role->name)->count();
-            }
-
-            $doneCount = RecordApproval::where('record_id', $this->record->id)
-                ->where('stage_id', $currentStage->id)
-                ->where('action', 'approved')
-                ->distinct('user_id')
-                ->count('user_id');
-
-            if ($reviewerCount > 0 && $doneCount < $reviewerCount) {
+            if (!$this->allReviewersFinalized($currentStage)) {
                 $this->approvalComment = '';
                 $this->dispatch('notify', type: 'success', message: 'Review submitted. Waiting for other reviewers.');
                 return;
@@ -157,12 +149,14 @@ class DynamicRecordShow extends Component
         $targetStage = WorkflowStage::find($branch['stage_id']);
         $label = $branch['label'];
 
+        // Mark this reviewer's individual decision with a finalization timestamp.
         RecordApproval::create([
-            'record_id' => $this->record->id,
-            'stage_id'  => $currentStage?->id,
-            'user_id'   => auth()->id(),
-            'action'    => 'forwarded',
-            'comment'   => $this->approvalComment ?: null,
+            'record_id'   => $this->record->id,
+            'stage_id'    => $currentStage?->id,
+            'user_id'     => auth()->id(),
+            'action'      => 'forwarded',
+            'comment'     => $this->approvalComment ?: null,
+            'reviewed_at' => now(),
         ]);
 
         RecordHistory::create([
@@ -172,20 +166,10 @@ class DynamicRecordShow extends Component
             'changes_json' => ['path' => $label, 'to_stage' => $targetStage?->name],
         ]);
 
+        // For review-type stages, wait until every assigned reviewer has submitted
+        // their individual decision before advancing the record globally.
         if (!$autoAdvance && $currentStage && $currentStage->stage_type === 'review') {
-            $reviewerCount = 0;
-            if ($currentStage->approver_role_id) {
-                $role = Role::find($currentStage->approver_role_id);
-                if ($role) $reviewerCount = User::role($role->name)->count();
-            }
-
-            $doneCount = RecordApproval::where('record_id', $this->record->id)
-                ->where('stage_id', $currentStage->id)
-                ->where('action', 'forwarded')
-                ->distinct('user_id')
-                ->count('user_id');
-
-            if ($reviewerCount > 0 && $doneCount < $reviewerCount) {
+            if (!$this->allReviewersFinalized($currentStage)) {
                 $this->approvalComment = '';
                 $this->dispatch('notify', type: 'success', message: "Review forwarded ({$label}). Waiting for other reviewers.");
                 return;
@@ -211,12 +195,19 @@ class DynamicRecordShow extends Component
         $this->authorizeApprovalAction();
         $this->validate(['approvalComment' => 'required|string|max:2000'], [], ['approvalComment' => 'revision notes']);
 
+        $currentStage = $this->record->currentStage;
+
+        // Record THIS reviewer's individual decision with a finalization timestamp.
+        // The global record status must NOT change here — other reviewers may still
+        // need to submit their evaluations.  The global advancement happens only
+        // once every assigned reviewer has finalized (see allReviewersFinalized()).
         RecordApproval::create([
-            'record_id' => $this->record->id,
-            'stage_id'  => $this->record->current_stage_id,
-            'user_id'   => auth()->id(),
-            'action'    => 'returned',
-            'comment'   => $this->approvalComment,
+            'record_id'   => $this->record->id,
+            'stage_id'    => $this->record->current_stage_id,
+            'user_id'     => auth()->id(),
+            'action'      => 'returned',
+            'comment'     => $this->approvalComment,
+            'reviewed_at' => now(),
         ]);
 
         RecordHistory::create([
@@ -226,6 +217,18 @@ class DynamicRecordShow extends Component
             'changes_json' => ['comment' => $this->approvalComment],
         ]);
 
+        // For review-type stages: only finalize the global status once ALL
+        // reviewers have submitted.  Until then, keep the proposal in every
+        // other reviewer's queue.
+        if ($currentStage && $currentStage->stage_type === 'review') {
+            if (!$this->allReviewersFinalized($currentStage)) {
+                $this->approvalComment = '';
+                $this->dispatch('notify', type: 'success', message: 'Return recorded. Waiting for other reviewers to complete their evaluations.');
+                return;
+            }
+        }
+
+        // All reviewers done (or this is a non-review stage) — finalize globally.
         $this->record->update(['status' => 'Returned', 'current_stage_id' => null]);
         $this->approvalComment = '';
 
@@ -387,6 +390,37 @@ class DynamicRecordShow extends Component
         }
 
         return true;
+    }
+
+    /**
+     * Returns true when every user in the stage's approver role has a finalized
+     * RecordApproval row (reviewed_at IS NOT NULL) for the current record + stage.
+     *
+     * If the stage has no approver role, or zero users hold that role, the check
+     * is considered satisfied so the workflow is never silently blocked.
+     */
+    private function allReviewersFinalized(WorkflowStage $stage): bool
+    {
+        if (!$stage->approver_role_id) {
+            return true;
+        }
+
+        $role = Role::find($stage->approver_role_id);
+        if (!$role) {
+            return true;
+        }
+
+        $reviewerCount = User::role($role->name)->count();
+        if ($reviewerCount === 0) {
+            return true;
+        }
+
+        $finalizedCount = RecordApproval::finalizedReviewerCount(
+            $this->record->id,
+            $stage->id
+        );
+
+        return $finalizedCount >= $reviewerCount;
     }
 
     private function authorizeApprovalAction(): void
