@@ -63,19 +63,11 @@ class DynamicRecordShow extends Component
             if ($slug) $this->stageFieldValues[$slug] = $this->record->data[$slug] ?? '';
         }
 
-        // Mint one editor token per text_editor field — reused on every re-render.
-        // Scoped to recordId so form and show components cannot stomp each other's tokens.
-        // Revoke ALL previous tokens for this prefix immediately to prevent accumulation on repeated views.
-        $tokenPrefix = 'editor-' . $this->recordId . '-';
-        auth()->user()->tokens()->where('name', 'like', $tokenPrefix . '%')->delete();
-        auth()->user()->tokens()->where('name', 'like', 'editor-%')->whereNotLike('name', 'editor-%-%-%')->where('created_at', '<', now()->subHours(8))->delete();
-        foreach ($this->module->fields as $field) {
-            if ($field->type === 'text_editor') {
-                $this->editorTokens[$field->slug] = auth()->user()
-                    ->createToken($tokenPrefix . $field->slug, ['editor:read', 'editor:write'], now()->addHours(8))
-                    ->plainTextToken;
-            }
-        }
+        // Delegate to TokenMintingService which uses a safe delete-then-recreate
+        // strategy per individual field token (not delete-all), preventing a
+        // concurrent user's WebSocket session from losing auth.
+        $this->editorTokens = app(\App\Services\TokenMintingService::class)
+            ->mintEditorTokens(auth()->user(), $this->module, $this->recordId);
     }
 
     public function approve(bool $autoAdvance = false)
