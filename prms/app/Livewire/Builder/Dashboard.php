@@ -32,11 +32,15 @@ class Dashboard extends Component
         $user = auth()->user();
         $query = Record::query();
 
-        if ($user->hasRole('super admin') || $user->hasRole('Reviewer') || $user->hasRole('TRC Secretariat')) {
+        // Privileged roles and Proponents all see the full record set for dashboard visibility.
+        // my_records_only is enforced at the record list level, not on the dashboard.
+        if ($user->hasRole('super admin') || $user->hasRole('Reviewer')
+            || $user->hasRole('TRC Secretariat') || $user->hasRole('Proponent')) {
             return $query;
         }
 
-        $restrictedModuleIds = Module::where('my_records_only', true)->pluck('id')->toArray();
+        // Non-role-classified users fall back to module-scoped filtering
+        $restrictedModuleIds   = Module::where('my_records_only', true)->pluck('id')->toArray();
         $unrestrictedModuleIds = Module::where('my_records_only', false)->pluck('id')->toArray();
 
         $query->where(function ($q) use ($restrictedModuleIds, $unrestrictedModuleIds, $user) {

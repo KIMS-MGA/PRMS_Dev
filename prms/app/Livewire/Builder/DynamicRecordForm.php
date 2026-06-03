@@ -50,7 +50,7 @@ class DynamicRecordForm extends Component
         if ($record) {
             $this->record = Record::where('module_id', $targetModuleId)->findOrFail($record);
             if ($this->record->status === 'Completed') abort(403, 'Completed records cannot be edited.');
-            if (!$approvalService->canEditRecord(auth()->user(), $this->moduleSlug)) abort(403);
+            if (!$approvalService->canEditRecord(auth()->user(), $this->moduleSlug, $this->record)) abort(403);
             $this->recordId = $this->record->id;
             $this->data = $this->record->data ?? [];
             $this->status = $this->record->status ?? $this->module->default_status ?? 'Submitted';

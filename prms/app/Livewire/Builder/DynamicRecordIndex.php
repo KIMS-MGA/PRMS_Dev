@@ -103,7 +103,15 @@ class DynamicRecordIndex extends Component
     {
         if (!auth()->user()->can("delete-{$this->moduleSlug}")) abort(403);
         $targetModuleId = $this->module->source_module_id ?? $this->module->id;
-        Record::where('module_id', $targetModuleId)->where('id', $id)->delete();
+        $record = Record::where('module_id', $targetModuleId)->findOrFail($id);
+
+        // Proponents may only delete records they created
+        if (auth()->user()->hasRole('Proponent') && !auth()->user()->hasRole('super admin')
+            && $record->created_by !== auth()->id()) {
+            abort(403, 'You can only delete your own records.');
+        }
+
+        $record->delete();
     }
 
     public function updateStatus($id, $status)
@@ -211,8 +219,9 @@ class DynamicRecordIndex extends Component
         $isStageApprover = $user->roles->pluck('id')->intersect($stageRoleIds)->isNotEmpty();
         $canEditRecords = $user->hasRole('super admin')
             || $user->can("edit-{$this->moduleSlug}");
+        $isProponent = $user->hasRole('Proponent') && !$user->hasRole('super admin');
 
         return view('livewire.builder.dynamic-record-index',
-            compact('records', 'stages', 'usersMap', 'allStatuses', 'canEditRecords'));
+            compact('records', 'stages', 'usersMap', 'allStatuses', 'canEditRecords', 'isProponent'));
     }
 }

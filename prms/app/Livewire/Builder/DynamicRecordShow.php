@@ -500,8 +500,11 @@ class DynamicRecordShow extends Component
         $targetModuleId = $this->module->source_module_id ?? $this->module->id;
         $user         = auth()->user();
         $stageAllowsEdit = $currentStage === null || ($currentStage->allow_edit ?? true);
-        // Gate::before gives super admin all can() checks — no explicit hasRole needed
-        $canEdit      = $stageAllowsEdit && $user->can("edit-{$this->moduleSlug}");
+        $isOwner      = $this->record->created_by === $user->id;
+        // Proponents can only edit their own records; privileged roles are unrestricted
+        $canEdit      = $stageAllowsEdit
+            && $user->can("edit-{$this->moduleSlug}")
+            && (!$user->hasRole('Proponent') || $user->hasRole('super admin') || $isOwner);
         $canDeleteComments = $user->can('delete-comments');
         $allStages = WorkflowStage::where('module_id', $targetModuleId)->orderBy('order')->get();
         $currentOrder = $currentStage?->order ?? PHP_INT_MAX;
