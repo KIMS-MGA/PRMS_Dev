@@ -6,6 +6,7 @@ use Livewire\Component;
 use App\Models\Record;
 use App\Models\Module;
 use App\Models\RecordHistory;
+use App\Models\RecordSchedule;
 use App\Models\WorkflowStage;
 use Livewire\Attributes\Layout;
 
@@ -123,15 +124,16 @@ class Dashboard extends Component
             'approved' => $statRows->get($m->id)?->approved ?? 0,
         ]);
 
-        // TRC Schedule — records with date_scheduled set (filled after TRC Scheduling stage submission)
-        $trcSchedule = $this->getScopedRecordQuery()
-            ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(data, '$.date_scheduled')) IS NOT NULL")
-            ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(data, '$.date_scheduled')) != ''")
-            ->with(['module'])
-            ->get()
-            ->when(!$this->showPastTrc, fn($c) => $c->filter(fn($r) => !now()->startOfDay()->gt(\Carbon\Carbon::parse($r->data['date_scheduled']))))
-            ->sortBy(fn($r) => $r->data['date_scheduled'])
-            ->values();
+        // TRC Schedule — latest active (non-cancelled) entry per record from record_schedules
+        // MAX(id) gives the most recent row per record since IDs are auto-increment.
+        $latestIds = RecordSchedule::selectRaw('MAX(id) as id')->groupBy('record_id')->pluck('id');
+
+        $trcSchedule = RecordSchedule::whereIn('id', $latestIds)
+            ->where('action', '!=', 'cancelled')
+            ->with(['record.module', 'stage', 'scheduler'])
+            ->when(!$this->showPastTrc, fn($q) => $q->where('scheduled_at', '>=', now()->startOfDay()))
+            ->orderBy('scheduled_at')
+            ->get();
 
         // Recent activity (last 10 history entries, scoped to authorized records)
         $scopedRecordIds = $this->getScopedRecordQuery()->pluck('id');

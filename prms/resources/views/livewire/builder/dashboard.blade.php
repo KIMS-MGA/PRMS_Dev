@@ -113,32 +113,51 @@
                 <table class="w-full text-sm">
                     <thead class="bg-gray-50 text-xs uppercase text-gray-500 font-semibold">
                         <tr>
-                            <th class="px-5 py-3 text-left">Date Scheduled</th>
+                            <th class="px-5 py-3 text-left">Date &amp; Time</th>
                             <th class="px-5 py-3 text-left">Title</th>
+                            <th class="px-5 py-3 text-left">Stage</th>
                             <th class="px-5 py-3 text-right"></th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100">
-                        @forelse($trcSchedule as $rec)
+                        @forelse($trcSchedule as $entry)
                         @php
-                            $dateScheduled = $rec->data['date_scheduled'] ?? null;
-                            $isPast = $dateScheduled && \Carbon\Carbon::parse($dateScheduled)->startOfDay()->isPast();
+                            $isPast = $entry->scheduled_at->startOfDay()->isPast();
+                            $moduleSlug = $entry->record?->module?->slug;
+                            $recordId   = $entry->record_id;
                         @endphp
                         <tr class="hover:bg-gray-50 {{ $isPast ? 'opacity-60' : '' }}">
-                            <td class="px-5 py-3 font-semibold {{ $isPast ? 'text-gray-400' : 'text-indigo-700' }} whitespace-nowrap">
-                                {{ $dateScheduled ? \Carbon\Carbon::parse($dateScheduled)->format('M d, Y') : '—' }}
+                            <td class="px-5 py-3 whitespace-nowrap">
+                                <span class="font-semibold {{ $isPast ? 'text-gray-400' : 'text-purple-700' }}">
+                                    {{ $entry->scheduled_at->format('M d, Y') }}
+                                </span>
+                                <span class="text-xs {{ $isPast ? 'text-gray-400' : 'text-purple-500' }} ml-1">
+                                    {{ $entry->scheduled_at->format('g:i A') }}
+                                </span>
                                 @if($isPast)
-                                    <span class="ml-1 text-xs font-normal text-gray-400">(past)</span>
+                                    <span class="ml-1 text-xs text-gray-400">(past)</span>
                                 @endif
                             </td>
-                            <td class="px-5 py-3 text-gray-800">{{ $rec->data['title'] ?? '—' }}</td>
+                            <td class="px-5 py-3 text-gray-800">
+                                {{ $entry->record?->data['title'] ?? '—' }}
+                                @if($entry->notes)
+                                    <p class="text-xs text-gray-400 italic">{{ $entry->notes }}</p>
+                                @endif
+                            </td>
+                            <td class="px-5 py-3">
+                                <span class="px-2 py-0.5 rounded text-xs font-semibold bg-purple-50 text-purple-700">
+                                    {{ $entry->stage?->name ?? '—' }}
+                                </span>
+                            </td>
                             <td class="px-5 py-3 text-right">
-                                <a href="{{ route('dynamic.show', [$rec->module->slug, $rec->id]) }}" wire:navigate class="text-xs text-indigo-600 hover:underline font-medium">View →</a>
+                                @if($moduleSlug && $recordId)
+                                    <a href="{{ route('dynamic.show', [$moduleSlug, $recordId]) }}" wire:navigate class="text-xs text-indigo-600 hover:underline font-medium">View →</a>
+                                @endif
                             </td>
                         </tr>
                         @empty
                         <tr>
-                            <td colspan="3" class="px-5 py-8 text-center text-sm text-gray-400 italic">No upcoming TRC schedules.</td>
+                            <td colspan="4" class="px-5 py-8 text-center text-sm text-gray-400 italic">No upcoming TRC schedules.</td>
                         </tr>
                         @endforelse
                     </tbody>
