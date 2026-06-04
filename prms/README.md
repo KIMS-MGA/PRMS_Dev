@@ -1,8 +1,158 @@
-# Branch: `feature_TRC-Scheduling` — Changes vs `main`
+# PRMS — DENR-BMB Policy Review and Monitoring System
 
-**Branch:** `feature_TRC-Scheduling`
-**Author:** KIMS-MGA
-**Total Changes:** 16 files changed, 589 insertions(+), 74 deletions(-)
+**Repository:** KIMS-MGA/PRMS_Dev  
+**Current Branch:** `general-refinement`  
+**Last Updated:** 2026-06-04
+
+---
+
+## Branch Overview
+
+### Purpose
+The `general-refinement` branch serves as the integration branch for iterative improvements to the PRMS approval workflow, collaborative editing, module management, and system reliability. It accumulates incremental fixes, refactors, and feature additions before they are merged into `main`.
+
+### How It Differs from `main`
+| Aspect | `main` | `general-refinement` |
+|--------|--------|----------------------|
+| Stability | Production-ready, stable releases | Active development; may contain in-progress fixes |
+| Scope | Core scaffolding and foundational features | Workflow enhancements, bug fixes, new modules |
+| Merge strategy | Receives PRs from feature/fix branches | Commits directly or via short-lived feature branches |
+
+### What Belongs on This Branch
+- Approval workflow bug fixes and multi-reviewer logic improvements
+- Collaborative text editor enhancements
+- New module features (scheduling, notifications, audit logging)
+- Service layer refactoring and code extraction
+- Database migrations that extend existing tables
+- Test coverage additions for the approval workflow
+- README and documentation updates
+
+---
+
+## Recent Changes (Last 7 Days)
+
+> **Period:** 2026-05-28 → 2026-06-04 · **Commits:** 24 (excluding merges and README-only updates) · **Files Changed:** 38
+
+---
+
+### New Features
+
+- **Real-time Collaborative Text Editor** *(Jun 2)*  
+  Integrated Tiptap and Hocuspocus WebSocket server for multi-user concurrent document editing. Supports rich formatting (headings, lists, tables, subscript/superscript, code blocks, horizontal rules). Editor renders inside the policy document field on the record show/form pages.
+
+- **TRC / Ad Referendum Meeting Schedule Module** *(Jun 3)*  
+  New `RecordScheduler` Livewire component and `record_schedules` table. Allows TRC Secretariat users to schedule, reschedule, and cancel TRC or Ad Referendum meeting dates from the proposal detail page. Full schedule history log displayed per proposal. Dashboard "Upcoming TRC Schedule" table reads from this table.
+
+- **Proponent Ownership Enforcement** *(Jun 3)*  
+  Proponent-role users can now only edit or delete records they originally created. Non-owner Proponents see records in read-only mode. Ownership is enforced at the server side in `DynamicRecordForm`, `DynamicRecordIndex`, `DynamicRecordShow`, and `RecordApprovalService`.
+
+- **Submission Cycle Tracking** *(Jun 4)*  
+  Added `submission_cycle` integer column to `records` and `record_approvals`. Each resubmission increments the cycle counter. All queue queries, badge counts, and finalization checks are now scoped to the current cycle, enabling correct multi-cycle return-and-resubmit workflows while preserving complete audit history.
+
+---
+
+### Bug Fixes
+
+- **Secretariat Approval Queue blank after resubmission** *(Jun 3)*  
+  Stale-row cleanup in `RecordApprovalService::submitForApproval()` was gated on `$record->status === 'Returned'`, which was already overwritten to `'Draft'` by the time the service ran. Guard removed; cleanup now runs unconditionally.
+
+- **Reviewer "Return to Proponent" did not block stage advancement** *(Jun 3)*  
+  In multi-reviewer scenarios, the last reviewer to finalize determined the outcome regardless of peer decisions. Added `anyReviewerReturned()` check after `allReviewersFinalized()` — any reviewer's return immediately triggers the returned state.
+
+- **Reviewer Approval Queue empty despite notifications sent** *(Jun 3–04)*  
+  Stale-row cleanup only targeted Stage 1 (Secretariat stage), leaving finalized rows from downstream reviewer stages. Expanded cleanup to cover all stages in the module, then later replaced deletion entirely with cycle-scoped queue filtering.
+
+- **Approval Log losing prior-cycle history on resubmission** *(Jun 4)*  
+  The `record_approvals` table doubles as an audit log. Deletion of finalized rows wiped history. Solution: `submission_cycle` scoping makes prior-cycle rows invisible to queue filters without deleting them. The cleanup DELETE was removed entirely — the queue relies solely on the cycle-scoped `whereNotExists` subquery.
+
+- **Approval Queue badge count not matching queue records** *(Jun 4)*  
+  The navigation badge query was missing the `submission_cycle` column join present in the `ApprovalQueue` list query. Extracted a shared `Record::scopePendingForUser()` scope used by both the queue list and the badge count, guaranteeing permanent parity.
+
+- **Hocuspocus collaborative editor showing "Offline" status** *(Jun 3)*  
+  `TokenMintingService` was deleting all tokens for a record prefix on each page load, revoking tokens from concurrent sessions. Changed to expire-and-recreate strategy: only expired tokens (>8 hours) are pruned; live session tokens are preserved.
+
+- **Dashboard TRC Schedule showing stale data** *(Jun 3)*  
+  Dashboard was querying `record.data['date_scheduled']` (legacy JSON field) instead of the new `record_schedules` table. Updated to join `RecordSchedule` with `MAX(id)` per record, filtering out cancelled entries.
+
+- **Multiple reviewers: premature stage advancement** *(Jun 1)*  
+  Initial fix preventing the workflow from advancing before all assigned reviewers had submitted their decisions (precursor to the more comprehensive multi-reviewer rework on Jun 3).
+
+---
+
+### Refactoring & Code Cleanup
+
+- **`DynamicRecordForm` service extraction** *(May 28)*  
+  Extracted heavy business logic from the monolithic Livewire component into dedicated service classes: `RecordApprovalService`, `RecordCommentService`, `RecordSaveService`, and `TokenMintingService` under `App\Services`.
+
+- **`NotificationController` encapsulation** *(Jun 1)*  
+  Moved three inline route closures from `routes/web.php` into a dedicated `NotificationController`. Enables route caching, improves testability, and separates concerns.
+
+- **Removed unused project configuration files** *(Jun 1)*  
+  Cleaned up stale config files that were no longer referenced.
+
+- **Dashboard stats scoped to account** *(May 28)*  
+  KPI counts, status chart, trend chart, and module stats now respect the authenticated user's account/role scope instead of returning system-wide totals.
+
+---
+
+### New Migrations
+
+| Migration | Purpose |
+|-----------|---------|
+| `2026_06_03_000001_create_record_schedules_table` | TRC/Ad Referendum meeting schedule history |
+| `2026_06_03_000002_add_reviewer_status_to_record_approvals` | Per-reviewer status and `reviewed_at` tracking |
+| `2026_06_04_000001_add_submission_cycle_to_records_and_record_approvals` | Multi-cycle return-and-resubmit tracking |
+
+---
+
+### Tests Added
+
+- **`tests/Feature/MultiReviewerApprovalQueueTest.php`** — 23 tests, 111 assertions  
+  Covers: multi-reviewer quorum logic, return-wins-over-approve (both orderings), Secretariat queue visibility after resubmission, reviewer queue visibility after resubmission, approval log retention across cycles, badge count parity with queue list.
+
+---
+
+### Documentation
+
+- `README.md` updated to reflect `general-refinement` branch scope and all recent changes
+- `D:\git-PRMS Dev\Documentation\Resolved Issues\approval-workflow-queue-audit-log-fixes-2026-06-04.md` — detailed post-mortem of the six approval workflow issues resolved on Jun 4
+
+---
+
+## Change Summary Table
+
+| File / Module | Change Type | Description |
+|---------------|-------------|-------------|
+| `app/Services/RecordApprovalService.php` | New + Revised | Core approval workflow service; multi-reviewer logic, resubmission handling, cycle tracking, `scopePendingForUser` |
+| `app/Services/RecordSaveService.php` | New | Extracted record persistence logic from `DynamicRecordForm` |
+| `app/Services/RecordCommentService.php` | New | Extracted comment/remark logic from `DynamicRecordForm` |
+| `app/Services/TokenMintingService.php` | New | Safe per-field token mint strategy for collaborative editor |
+| `app/Models/Record.php` | Updated | Added `submission_cycle` fillable/cast; `scopePendingForUser()` scope |
+| `app/Models/RecordApproval.php` | Updated | Added `submission_cycle` fillable; cycle-scoped finalization helpers |
+| `app/Models/RecordSchedule.php` | New | Eloquent model for TRC/Ad Referendum schedule history |
+| `app/Livewire/Builder/ApprovalQueue.php` | Updated | Cycle-scoped `whereNotExists`; delegates to `scopePendingForUser` |
+| `app/Livewire/Builder/DynamicRecordShow.php` | Updated | `anyReviewerReturned()` guard; `submission_cycle` stamps; Proponent ownership gate; token minting delegated |
+| `app/Livewire/Builder/DynamicRecordForm.php` | Updated | Service layer delegation; passes `$record` to ownership check |
+| `app/Livewire/Builder/DynamicRecordIndex.php` | Updated | Ownership-gated Edit/Delete buttons per row |
+| `app/Livewire/Builder/RecordScheduler.php` | New | Livewire component for TRC scheduling UI and history |
+| `app/Livewire/Builder/Dashboard.php` | Updated | TRC schedule query from `record_schedules`; account-scoped stats; Proponent bypass |
+| `app/Http/Controllers/NotificationController.php` | New | Encapsulates notification route handlers |
+| `app/Http/Controllers/DynamicRecordController.php` | Updated | Refactored to use service layer |
+| `hocuspocus/server.js` | Updated | Auto `.env` loader; expanded auth diagnostics; separate network/parse error handling |
+| `resources/js/text-editor.js` | Updated | Three-tier `WS_URL` resolution |
+| `resources/views/livewire/builder/record-scheduler.blade.php` | New | Scheduling panel UI |
+| `resources/views/livewire/builder/dynamic-record-show.blade.php` | Updated | `RecordScheduler` injected; editor token serialization fix |
+| `resources/views/livewire/builder/dynamic-record-index.blade.php` | Updated | Per-row ownership-gated action buttons |
+| `resources/views/livewire/builder/dashboard.blade.php` | Updated | TRC schedule table uses `record_schedules`; Stage column added |
+| `resources/views/livewire/layout/navigation.blade.php` | Updated | Badge count uses `scopePendingForUser` |
+| `routes/web.php` | Updated | Notification closures moved to `NotificationController` |
+| `database/migrations/` | New (×3) | `record_schedules`, reviewer status, submission cycle |
+| `tests/Feature/MultiReviewerApprovalQueueTest.php` | New | 23 approval workflow regression tests |
+| `phpunit.xml` | Updated | Test suite configuration |
+
+---
+
+*Previously documented: `feature_TRC-Scheduling` branch changes (Jun 3, 2026) — see commit history for details.*
 
 ---
 
