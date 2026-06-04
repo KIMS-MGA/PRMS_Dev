@@ -56,9 +56,7 @@ export const DEFAULT_PAGE_SETUP = Object.freeze({
 export const getPageMap = (ydoc) => ydoc.getMap(TE_ROOTS.PAGE)
 export const getSectionsMap = (ydoc) => ydoc.getMap(TE_ROOTS.SECTIONS)
 export const getStylesMap = (ydoc) => ydoc.getMap(TE_ROOTS.STYLES)
-export const getPrintMap = (ydoc) => ydoc.getMap(TE_ROOTS.PRINT)
 export const getFootnotesMap = (ydoc) => ydoc.getMap(TE_ROOTS.FOOTNOTES)
-export const getCommentsIndexMap = (ydoc) => ydoc.getMap(TE_ROOTS.COMMENTS_INDEX)
 
 /** The prose fragment — read-only convenience; callers must NOT restructure it. */
 export const getProseFragment = (ydoc) => ydoc.getXmlFragment(PROSE_FRAGMENT_KEY)
