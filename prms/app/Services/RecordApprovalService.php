@@ -39,29 +39,56 @@ class RecordApprovalService
             throw new \RuntimeException('No approval stages are configured for this module.');
         }
 
-        // When resubmitting after a return, clear stale finalized approval rows for
-        // the first stage from the previous review cycle.  Without this, the
-        // ApprovalQueue "whereNotExists reviewed_at" filter would still exclude
-        // Secretariat users who had already finalized in the earlier cycle, making
-        // the proposal invisible to them after resubmission.
-        if ($record->status === 'Returned') {
-            RecordApproval::where('record_id', $record->id)
-                ->where('stage_id', $firstStage->id)
-                ->whereNotNull('reviewed_at')
-                ->delete();
-        }
+        // No cleanup of prior-cycle record_approvals rows is needed on resubmission.
+        //
+        // Why no cleanup is necessary:
+        //
+        //   record_approvals serves a dual purpose:
+        //     1. Active-cycle queue visibility check  (whereNotExists subquery in ApprovalQueue)
+        //     2. Immutable audit trail for the Approval Log (ALL rows, every cycle)
+        //
+        //   The ApprovalQueue whereNotExists subquery is fully cycle-scoped:
+        //     WHERE record_approvals.submission_cycle = records.submission_cycle
+        //   This means a row from cycle N (e.g. submission_cycle=1) cannot match
+        //   when the record is on cycle N+1 (records.submission_cycle=2).  Prior-cycle
+        //   finalized rows — whether 'approved', 'forwarded', or 'returned' — are
+        //   invisible to the queue filter and never prevent a reviewer from seeing
+        //   a resubmitted proposal.
+        //
+        //   Deleting prior-cycle rows was the original fix for the queue-visibility bug
+        //   (Fix 1), written before cycle-scoping was added to the subquery.  Now that
+        //   the queue is cycle-scoped, deletion is both unnecessary for correctness
+        //   AND actively harmful: it wipes out the Approval Log history that users
+        //   need to see (e.g. a Secretariat APPROVED or reviewer FORWARDED entry from
+        //   a prior cycle disappears from the log after resubmission).
+        //
+        // All finalized action rows ('approved', 'forwarded', 'returned') are now
+        // preserved unconditionally as immutable audit history.
+        //
+        // Cycle-scoped queue example (two-cycle scenario):
+        //   Cycle 1: Secretariat approves (submission_cycle=1) → reviewer returns (cycle=1)
+        //   → Proponent resubmits → cycle incremented to 2
+        //   → NO DELETE — all cycle-1 rows survive as audit history ✓
+        //   Cycle 2: new 'submitted' row written with submission_cycle=2
+        //   → Queue subquery: submission_cycle = records.submission_cycle = 2
+        //       Cycle-1 approved row has submission_cycle=1 → subquery finds NO match
+        //       → whereNotExists = TRUE → Secretariat sees the resubmitted proposal ✓
+        //   → Approval Log fetches ALL rows → shows full history across all cycles ✓
+        $newCycle = $record->submission_cycle + 1;
 
         $record->update([
             'status'           => 'Submitted',
             'current_stage_id' => $firstStage->id,
             'stage_entered_at' => now(),
+            'submission_cycle' => $newCycle,
         ]);
 
         RecordApproval::create([
-            'record_id' => $record->id,
-            'stage_id'  => $firstStage->id,
-            'user_id'   => $user->id,
-            'action'    => 'submitted',
+            'record_id'        => $record->id,
+            'stage_id'         => $firstStage->id,
+            'user_id'          => $user->id,
+            'action'           => 'submitted',
+            'submission_cycle' => $newCycle,
         ]);
 
         RecordHistory::create([
@@ -87,11 +114,13 @@ class RecordApprovalService
         $currentStage = $record->currentStage;
 
         RecordApproval::create([
-            'record_id' => $record->id,
-            'stage_id'  => $currentStage?->id,
-            'user_id'   => $user->id,
-            'action'    => 'approved',
-            'comment'   => $comment ?: null,
+            'record_id'        => $record->id,
+            'stage_id'         => $currentStage?->id,
+            'user_id'          => $user->id,
+            'action'           => 'approved',
+            'comment'          => $comment ?: null,
+            'reviewed_at'      => now(),
+            'submission_cycle' => $record->submission_cycle,
         ]);
 
         RecordHistory::create([
@@ -102,20 +131,20 @@ class RecordApprovalService
         ]);
 
         if (!$autoAdvance && $currentStage && $currentStage->stage_type === 'review') {
-            $reviewerCount = 0;
-            if ($currentStage->approver_role_id) {
-                $role = Role::find($currentStage->approver_role_id);
-                if ($role) $reviewerCount = User::role($role->name)->count();
+            if (!$this->allReviewersFinalized($record, $currentStage)) {
+                return false;
             }
 
-            $doneCount = RecordApproval::where('record_id', $record->id)
-                ->where('stage_id', $currentStage->id)
-                ->where('action', 'approved')
-                ->distinct('user_id')
-                ->count('user_id');
+            // All reviewers have finalized. If ANY reviewer submitted a 'returned'
+            // decision the return path wins — an approve decision cannot override a
+            // peer's return decision.
+            if ($this->anyReviewerReturned($record, $currentStage)) {
+                $record->update(['status' => 'Returned', 'current_stage_id' => null]);
 
-            if ($reviewerCount > 0 && $doneCount < $reviewerCount) {
-                return false;
+                $submitter = User::find($record->created_by);
+                $submitter?->notify(new DynamicNotification("Your record in {$module->name} has been returned for revision.", $record->id, $module->slug));
+
+                return true;
             }
         }
 
@@ -172,11 +201,13 @@ class RecordApprovalService
         $label = $branch['label'];
 
         RecordApproval::create([
-            'record_id' => $record->id,
-            'stage_id'  => $currentStage?->id,
-            'user_id'   => $user->id,
-            'action'    => 'forwarded',
-            'comment'   => $comment ?: null,
+            'record_id'        => $record->id,
+            'stage_id'         => $currentStage?->id,
+            'user_id'          => $user->id,
+            'action'           => 'forwarded',
+            'comment'          => $comment ?: null,
+            'reviewed_at'      => now(),
+            'submission_cycle' => $record->submission_cycle,
         ]);
 
         RecordHistory::create([
@@ -187,20 +218,20 @@ class RecordApprovalService
         ]);
 
         if (!$autoAdvance && $currentStage && $currentStage->stage_type === 'review') {
-            $reviewerCount = 0;
-            if ($currentStage->approver_role_id) {
-                $role = Role::find($currentStage->approver_role_id);
-                if ($role) $reviewerCount = User::role($role->name)->count();
+            if (!$this->allReviewersFinalized($record, $currentStage)) {
+                return false;
             }
 
-            $doneCount = RecordApproval::where('record_id', $record->id)
-                ->where('stage_id', $currentStage->id)
-                ->where('action', 'forwarded')
-                ->distinct('user_id')
-                ->count('user_id');
+            // All reviewers have finalized. If ANY reviewer submitted a 'returned'
+            // decision the return path wins — a forward decision cannot override a
+            // peer's return decision.
+            if ($this->anyReviewerReturned($record, $currentStage)) {
+                $record->update(['status' => 'Returned', 'current_stage_id' => null]);
 
-            if ($reviewerCount > 0 && $doneCount < $reviewerCount) {
-                return false;
+                $submitter = User::find($record->created_by);
+                $submitter?->notify(new DynamicNotification("Your record in {$module->name} has been returned for revision.", $record->id, $module->slug));
+
+                return true;
             }
         }
 
@@ -229,11 +260,12 @@ class RecordApprovalService
     public function returnForRevision(Record $record, Module $module, User $user, string $comment): void
     {
         RecordApproval::create([
-            'record_id' => $record->id,
-            'stage_id'  => $record->current_stage_id,
-            'user_id'   => $user->id,
-            'action'    => 'returned',
-            'comment'   => $comment,
+            'record_id'        => $record->id,
+            'stage_id'         => $record->current_stage_id,
+            'user_id'          => $user->id,
+            'action'           => 'returned',
+            'comment'          => $comment,
+            'submission_cycle' => $record->submission_cycle,
         ]);
 
         RecordHistory::create([
@@ -384,6 +416,59 @@ class RecordApprovalService
         }
 
         return $user->can("approve-{$moduleSlug}");
+    }
+
+    /**
+     * Returns true when every user in the stage's approver role has a finalized
+     * RecordApproval row (reviewed_at IS NOT NULL) for the current record + stage
+     * in the CURRENT submission cycle.
+     *
+     * Scoping to submission_cycle prevents prior-cycle decisions from being counted
+     * toward the new cycle's quorum, which would cause the record to skip reviewer
+     * confirmation after a return-and-resubmit cycle.
+     *
+     * Counts any action (approved, forwarded, returned) — the caller is responsible
+     * for subsequently deciding what outcome to apply.
+     */
+    private function allReviewersFinalized(Record $record, WorkflowStage $stage): bool
+    {
+        if (!$stage->approver_role_id) {
+            return true;
+        }
+
+        $role = Role::find($stage->approver_role_id);
+        if (!$role) {
+            return true;
+        }
+
+        $reviewerCount = User::role($role->name)->count();
+        if ($reviewerCount === 0) {
+            return true;
+        }
+
+        $finalizedCount = RecordApproval::finalizedReviewerCount(
+            $record->id,
+            $stage->id,
+            $record->submission_cycle
+        );
+
+        return $finalizedCount >= $reviewerCount;
+    }
+
+    /**
+     * Returns true if at least one reviewer has a finalized 'returned' decision
+     * for the given record + stage in the CURRENT submission cycle.  Scoping to
+     * the current cycle prevents prior-cycle return decisions from bleeding into
+     * the new cycle and incorrectly short-circuiting a fresh approve/forward action.
+     */
+    private function anyReviewerReturned(Record $record, WorkflowStage $stage): bool
+    {
+        return RecordApproval::where('record_id', $record->id)
+            ->where('stage_id', $stage->id)
+            ->where('submission_cycle', $record->submission_cycle)
+            ->where('action', 'returned')
+            ->whereNotNull('reviewed_at')
+            ->exists();
     }
 
     /**

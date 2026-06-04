@@ -80,12 +80,13 @@ class DynamicRecordShow extends Component
 
         // Mark this reviewer's individual decision with a finalization timestamp.
         RecordApproval::create([
-            'record_id'   => $this->record->id,
-            'stage_id'    => $currentStage?->id,
-            'user_id'     => auth()->id(),
-            'action'      => 'approved',
-            'comment'     => $this->approvalComment ?: null,
-            'reviewed_at' => now(),
+            'record_id'        => $this->record->id,
+            'stage_id'         => $currentStage?->id,
+            'user_id'          => auth()->id(),
+            'action'           => 'approved',
+            'comment'          => $this->approvalComment ?: null,
+            'reviewed_at'      => now(),
+            'submission_cycle' => $this->record->submission_cycle,
         ]);
 
         RecordHistory::create([
@@ -101,6 +102,20 @@ class DynamicRecordShow extends Component
             if (!$this->allReviewersFinalized($currentStage)) {
                 $this->approvalComment = '';
                 $this->dispatch('notify', type: 'success', message: 'Review submitted. Waiting for other reviewers.');
+                return;
+            }
+
+            // All reviewers have finalized. If ANY reviewer submitted a 'returned'
+            // decision the return path wins — the approve/forward decision cannot
+            // override a peer's return decision.
+            if ($this->anyReviewerReturned($currentStage)) {
+                $this->record->update(['status' => 'Returned', 'current_stage_id' => null]);
+                $this->approvalComment = '';
+
+                $submitter = User::find($this->record->created_by);
+                $submitter?->notify(new DynamicNotification("Your record in {$this->module->name} has been returned for revision.", $this->record->id, $this->moduleSlug));
+
+                $this->dispatch('notify', type: 'success', message: 'Record returned for revision.');
                 return;
             }
         }
@@ -151,12 +166,13 @@ class DynamicRecordShow extends Component
 
         // Mark this reviewer's individual decision with a finalization timestamp.
         RecordApproval::create([
-            'record_id'   => $this->record->id,
-            'stage_id'    => $currentStage?->id,
-            'user_id'     => auth()->id(),
-            'action'      => 'forwarded',
-            'comment'     => $this->approvalComment ?: null,
-            'reviewed_at' => now(),
+            'record_id'        => $this->record->id,
+            'stage_id'         => $currentStage?->id,
+            'user_id'          => auth()->id(),
+            'action'           => 'forwarded',
+            'comment'          => $this->approvalComment ?: null,
+            'reviewed_at'      => now(),
+            'submission_cycle' => $this->record->submission_cycle,
         ]);
 
         RecordHistory::create([
@@ -172,6 +188,20 @@ class DynamicRecordShow extends Component
             if (!$this->allReviewersFinalized($currentStage)) {
                 $this->approvalComment = '';
                 $this->dispatch('notify', type: 'success', message: "Review forwarded ({$label}). Waiting for other reviewers.");
+                return;
+            }
+
+            // All reviewers have finalized. If ANY reviewer submitted a 'returned'
+            // decision the return path wins — a forward decision cannot override a
+            // peer's return decision.
+            if ($this->anyReviewerReturned($currentStage)) {
+                $this->record->update(['status' => 'Returned', 'current_stage_id' => null]);
+                $this->approvalComment = '';
+
+                $submitter = User::find($this->record->created_by);
+                $submitter?->notify(new DynamicNotification("Your record in {$this->module->name} has been returned for revision.", $this->record->id, $this->moduleSlug));
+
+                $this->dispatch('notify', type: 'success', message: 'Record returned for revision.');
                 return;
             }
         }
@@ -202,12 +232,13 @@ class DynamicRecordShow extends Component
         // need to submit their evaluations.  The global advancement happens only
         // once every assigned reviewer has finalized (see allReviewersFinalized()).
         RecordApproval::create([
-            'record_id'   => $this->record->id,
-            'stage_id'    => $this->record->current_stage_id,
-            'user_id'     => auth()->id(),
-            'action'      => 'returned',
-            'comment'     => $this->approvalComment,
-            'reviewed_at' => now(),
+            'record_id'        => $this->record->id,
+            'stage_id'         => $this->record->current_stage_id,
+            'user_id'          => auth()->id(),
+            'action'           => 'returned',
+            'comment'          => $this->approvalComment,
+            'reviewed_at'      => now(),
+            'submission_cycle' => $this->record->submission_cycle,
         ]);
 
         RecordHistory::create([
@@ -394,7 +425,12 @@ class DynamicRecordShow extends Component
 
     /**
      * Returns true when every user in the stage's approver role has a finalized
-     * RecordApproval row (reviewed_at IS NOT NULL) for the current record + stage.
+     * RecordApproval row (reviewed_at IS NOT NULL) for the current record + stage
+     * in the CURRENT submission cycle.
+     *
+     * Scoping to submission_cycle prevents prior-cycle decisions from being counted
+     * toward the new cycle's quorum, which would cause the record to skip reviewer
+     * confirmation after a return-and-resubmit cycle.
      *
      * If the stage has no approver role, or zero users hold that role, the check
      * is considered satisfied so the workflow is never silently blocked.
@@ -417,10 +453,27 @@ class DynamicRecordShow extends Component
 
         $finalizedCount = RecordApproval::finalizedReviewerCount(
             $this->record->id,
-            $stage->id
+            $stage->id,
+            $this->record->submission_cycle
         );
 
         return $finalizedCount >= $reviewerCount;
+    }
+
+    /**
+     * Returns true if at least one reviewer has a finalized 'returned' decision
+     * for the current record + stage in the CURRENT submission cycle.  Scoping to
+     * the current cycle prevents prior-cycle return decisions from bleeding into
+     * the new cycle and incorrectly short-circuiting a fresh approve/forward action.
+     */
+    private function anyReviewerReturned(WorkflowStage $stage): bool
+    {
+        return RecordApproval::where('record_id', $this->record->id)
+            ->where('stage_id', $stage->id)
+            ->where('submission_cycle', $this->record->submission_cycle)
+            ->where('action', 'returned')
+            ->whereNotNull('reviewed_at')
+            ->exists();
     }
 
     private function authorizeApprovalAction(): void

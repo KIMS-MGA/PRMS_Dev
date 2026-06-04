@@ -102,30 +102,9 @@ new class extends Component {
                     </svg>
                     Approval Queue
                     @php
-                        $navUser = auth()->user();
-                        if ($navUser->hasRole('super admin')) {
-                            $pending = \App\Models\Record::whereNotNull('current_stage_id')->count();
-                        } else {
-                            $navRoleIds   = $navUser->roles->pluck('id');
-                            $navStageIds  = \App\Models\WorkflowStage::whereIn('approver_role_id', $navRoleIds)->pluck('id');
-                            $navPermSlugs = $navUser->permissions
-                                ->filter(fn($p) => str_starts_with($p->name, 'review-') || str_starts_with($p->name, 'approve-'))
-                                ->map(fn($p) => preg_replace('/^(review|approve)-/', '', $p->name));
-                            $navPermModuleIds = \App\Models\Module::whereIn('slug', $navPermSlugs)->pluck('id');
-                            $pending = \App\Models\Record::whereNotNull('current_stage_id')
-                                ->where(function ($q) use ($navStageIds, $navPermModuleIds) {
-                                    $q->whereIn('current_stage_id', $navStageIds)
-                                      ->orWhereIn('module_id', $navPermModuleIds);
-                                })
-                                ->whereNotExists(function ($q) use ($navUser) {
-                                    $q->from('record_approvals')
-                                      ->whereColumn('record_approvals.record_id', 'records.id')
-                                      ->whereColumn('record_approvals.stage_id', 'records.current_stage_id')
-                                      ->where('record_approvals.user_id', $navUser->id)
-                                      ->whereNotNull('record_approvals.reviewed_at');
-                                })
-                                ->count();
-                        }
+                        // Uses the same scope as ApprovalQueue::render() so badge
+                        // count and queue list are always identical.
+                        $pending = \App\Models\Record::pendingForUser(auth()->user())->count();
                     @endphp
                     @if($pending > 0)
                         <span
