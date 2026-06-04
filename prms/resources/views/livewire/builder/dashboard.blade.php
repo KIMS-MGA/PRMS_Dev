@@ -122,7 +122,7 @@
                     <tbody class="divide-y divide-gray-100">
                         @forelse($trcSchedule as $entry)
                         @php
-                            $isPast = $entry->scheduled_at->startOfDay()->isPast();
+                            $isPast = $entry->scheduled_at->isPast();
                             $moduleSlug = $entry->record?->module?->slug;
                             $recordId   = $entry->record_id;
                         @endphp
