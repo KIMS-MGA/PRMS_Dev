@@ -704,7 +704,7 @@ class TextEditorInstance {
               <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="2" x2="8" y2="22"/><line x1="16" y1="2" x2="16" y2="22"/><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="17" x2="20" y2="17"/></svg>
               Margins
             </button>
-            <button type="button" data-cmd="exportPdf" title="Print / Save as PDF" class="te-btn" style="font-size:11px;padding:5px 10px">Print</button>
+
             <button type="button" data-cmd="fullscreen" title="Toggle fullscreen" class="te-btn te-fullscreen-btn">
               <svg class="te-icon-expand w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
               <svg class="te-icon-compress w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="10" y1="14" x2="3" y2="21"/><line x1="21" y1="3" x2="14" y2="10"/></svg>
@@ -1097,7 +1097,7 @@ class TextEditorInstance {
           padding: 20px;
           font-family: 'Times New Roman', Times, serif;
           font-size: 12pt;
-          line-height: 1.15;
+          line-height: 1;
         }
         .te-page.te-page-auto {
           flex: 1;
@@ -1182,6 +1182,12 @@ class TextEditorInstance {
         .selectedCell { background: #dbeafe !important; }
         /* Images */
         .te-page img { max-width: 100%; height: auto; display: block; margin: 8px 0; cursor: default; }
+
+        /* Blockquote */
+        .te-page .ProseMirror blockquote {
+          border-left: 3px solid #d1d5db; padding-left: 1em;
+          margin: 0.5em 0 0.5em 0; color: #4b5563; font-style: italic;
+        }
 
         /* Horizontal rule */
         .te-page .ProseMirror hr { border:none; border-top:2px solid #d1d5db; margin:12px 0; }
@@ -1357,8 +1363,7 @@ class TextEditorInstance {
           case 'link':         this.promptLink(); break
           case 'clearFormat':  c.clearFormatting().run(); break
           case 'find':         this.openFind(false); break
-          case 'print':        this.openPrintLayout(); break
-          case 'exportPdf':    this.exportToPdf(); break
+
           case 'trackChanges': this.toggleSuggestionMode(); break
           case 'acceptChanges': c.acceptAllSuggestions().run(); this.announce('All suggestions accepted'); break
           case 'rejectChanges': c.rejectAllSuggestions().run(); this.announce('All suggestions rejected'); break
@@ -1375,7 +1380,7 @@ class TextEditorInstance {
           case 'mergeCells':   c.mergeCells().run(); break
           case 'splitCell':    c.splitCell().run(); break
         }
-        if (!['table', 'pageSetup', 'image', 'sourceToggle', 'find', 'print', 'exportPdf'].includes(cmd)) {
+        if (!['table', 'pageSetup', 'image', 'sourceToggle', 'find'].includes(cmd)) {
           this.updateToolbarState()
         }
       })
@@ -1743,25 +1748,12 @@ class TextEditorInstance {
 
   // Lazily open the find / replace panel (pulls in prosemirror-search on demand).
   openFind(replace = false) {
-    if (this.readonly) return
+    if (this.readonly && replace) return
     import('./text-editor/features/find-replace.js')
       .then(({ openFindReplace }) => openFindReplace(this, { replace }))
       .catch((err) => console.error('Failed to load find/replace', err))
   }
 
-  // Lazily open the paginated Print Layout preview (pulls in Paged.js on demand).
-  openPrintLayout() {
-    import('./text-editor/print/paged-runner.js')
-      .then(({ openPrintPreview }) => openPrintPreview(this))
-      .catch((err) => console.error('Failed to load print pipeline', err))
-  }
-
-  // Lazily export to PDF via the native print path (same artifacts as preview).
-  exportToPdf() {
-    import('./text-editor/print/paged-runner.js')
-      .then(({ exportPdf }) => exportPdf(this))
-      .catch((err) => console.error('Failed to load print pipeline', err))
-  }
 
   syncToLivewire(html) {
     if (!this.hiddenInput) return
@@ -1894,16 +1886,23 @@ class TextEditorInstance {
     const m = this.margins || { top: 0, bottom: 0 }
     const contentH = Math.max(50, pageH - (m.top || 0) - (m.bottom || 0))
 
-    // The line sits 2px before each content-height boundary and is 2px tall.
+    // Repeat period = pageH + 50 px so each visual "page slot" on screen has the
+    // full page height plus a 50 px white gap below the divider line. The divider
+    // falls at the true page boundary (pageH − 2 → pageH); the 50 px after it is
+    // transparent white — breathing room before the next page's content starts.
+    const GAP    = 50
+    const period = pageH + GAP
+
     page.style.backgroundImage = `repeating-linear-gradient(
       to bottom,
       transparent 0px,
-      transparent calc(${contentH}px - 2px),
-      #9ca3af calc(${contentH}px - 2px),
-      #9ca3af ${contentH}px,
-      transparent ${contentH}px
+      transparent calc(${pageH}px - 2px),
+      #9ca3af calc(${pageH}px - 2px),
+      #9ca3af ${pageH}px,
+      transparent ${pageH}px,
+      transparent ${period}px
     )`
-    page.style.backgroundPosition = `0 ${m.top || 0}px`
+    page.style.backgroundPosition = '0 0'
   }
 
   applyPageSize() {
@@ -2220,7 +2219,7 @@ class TextEditorInstance {
 
     this.editor.on('selectionUpdate', ({ editor }) => {
       const { from, to } = editor.state.selection
-      if (from === to || this.readonly) {
+      if (from === to) {
         this.commentTooltip.style.display = 'none'
         return
       }
@@ -2306,11 +2305,13 @@ class TextEditorInstance {
       })
       if (!res.ok) throw new Error('Failed to save comment')
 
+      const wasReadonly = !this.editor.isEditable
+      if (wasReadonly) this.editor.setEditable(true)
       this.editor.chain()
-        .focus()
         .setTextSelection({ from, to })
         .setMark('inlineComment', { commentId })
         .run()
+      if (wasReadonly) this.editor.setEditable(false)
 
       this.commentPopover.style.display = 'none'
       this._pendingCommentRange = null
