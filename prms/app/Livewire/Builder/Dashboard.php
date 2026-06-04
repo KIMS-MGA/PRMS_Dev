@@ -25,17 +25,25 @@ class Dashboard extends Component
     }
 
     /**
-     * Get a scoped record query builder respecting my_records_only setting per module.
+     * Get a scoped record query builder.
+     *
+     * - Proponents see only records they created (created_by = their id).
+     * - Privileged roles (super admin, Reviewer, TRC Secretariat) see all records.
+     * - Unclassified users fall back to module-level my_records_only scoping.
      */
     private function getScopedRecordQuery()
     {
         $user = auth()->user();
         $query = Record::query();
 
-        // Privileged roles and Proponents all see the full record set for dashboard visibility.
-        // my_records_only is enforced at the record list level, not on the dashboard.
+        // Proponents may only see their own records.
+        if ($user->hasRole('Proponent') && !$user->hasRole('super admin')) {
+            return $query->where('created_by', $user->id);
+        }
+
+        // Privileged roles see the full record set.
         if ($user->hasRole('super admin') || $user->hasRole('Reviewer')
-            || $user->hasRole('TRC Secretariat') || $user->hasRole('Proponent')) {
+            || $user->hasRole('TRC Secretariat')) {
             return $query;
         }
 
