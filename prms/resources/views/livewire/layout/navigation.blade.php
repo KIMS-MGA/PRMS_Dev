@@ -102,11 +102,9 @@ new class extends Component {
                     </svg>
                     Approval Queue
                     @php
-                        $userRoleIds = auth()->user()->roles->pluck('id');
-                        $stageIds = \App\Models\WorkflowStage::whereIn('approver_role_id', $userRoleIds)->pluck('id');
-                        $pending = auth()->user()->hasRole('super admin')
-                            ? \App\Models\Record::whereNotNull('current_stage_id')->count()
-                            : \App\Models\Record::whereIn('current_stage_id', $stageIds)->count();
+                        // Uses the same scope as ApprovalQueue::render() so badge
+                        // count and queue list are always identical.
+                        $pending = \App\Models\Record::pendingForUser(auth()->user())->count();
                     @endphp
                     @if($pending > 0)
                         <span
