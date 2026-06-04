@@ -456,7 +456,10 @@ class TextEditorInstance {
     }
 
     const extensions = [
-      StarterKit.configure({ history: false }),
+      // Disable StarterKit's history only when collaboration is active (Yjs owns
+      // undo/redo then). For new records there's no Collaboration extension, so we
+      // must keep StarterKit history or the undo/redo buttons do nothing.
+      StarterKit.configure(isNew ? {} : { history: false }),
       Indent,
       Typography,
       Placeholder.configure({ placeholder: 'Start typing…' }),
@@ -965,6 +968,7 @@ class TextEditorInstance {
           transition:all 0.15s;
         }
         .te-action-btn:hover { background:#f9fafb; border-color:#d1d5db; color:#374151; }
+        .te-action-btn.is-active { background:#ede9fe; border-color:#c4b5fd; color:#6d28d9; }
         .te-review-done-btn {
           display:inline-flex; align-items:center; gap:5px;
           padding:6px 14px; border-radius:8px;
@@ -1563,6 +1567,8 @@ class TextEditorInstance {
       h5:           e.isActive('heading', { level: 5 }),
       h6:           e.isActive('heading', { level: 6 }),
       link:         e.isActive('link'),
+      trackChanges: this.suggestionMode,
+      fullscreen:   this.container.querySelector('.te-shell')?.classList.contains('te-fullscreen') ?? false,
     }
     toolbarWrap.querySelectorAll('[data-cmd]').forEach(btn => {
       btn.classList.toggle('is-active', !!states[btn.dataset.cmd])
@@ -1651,12 +1657,14 @@ class TextEditorInstance {
     this.historyToggle?.addEventListener('click', () => {
       const opening = this.historyPanel.classList.contains('hidden')
       this.historyPanel.classList.toggle('hidden', !opening)
+      this.historyToggle.classList.toggle('is-active', opening)
       syncSidePanels()
       if (opening && this.recordId !== 'new') this.loadHistory()
     })
 
     this.container.querySelector('.history-close-btn')?.addEventListener('click', () => {
       this.historyPanel.classList.add('hidden')
+      this.historyToggle?.classList.remove('is-active')
       syncSidePanels()
     })
 
@@ -1802,8 +1810,9 @@ class TextEditorInstance {
     shell.classList.toggle('te-fullscreen', entering)
     document.body.style.overflow = entering ? 'hidden' : ''
 
-    // Swap the icon
+    // Swap the icon and reflect active state
     const btn = this.container.querySelector('[data-cmd="fullscreen"]')
+    btn?.classList.toggle('is-active', entering)
     btn?.querySelector('.te-icon-expand')?.style.setProperty('display', entering ? 'none' : '')
     btn?.querySelector('.te-icon-compress')?.style.setProperty('display', entering ? '' : 'none')
 
@@ -2186,12 +2195,14 @@ class TextEditorInstance {
     this.commentsToggle?.addEventListener('click', () => {
       const opening = this.commentsPanel.classList.contains('hidden')
       this.commentsPanel.classList.toggle('hidden', !opening)
+      this.commentsToggle.classList.toggle('is-active', opening)
       this._syncSidePanels?.()
       if (opening && !isNew) this.loadComments()
     })
 
     this.container.querySelector('.comments-close-btn')?.addEventListener('click', () => {
       this.commentsPanel.classList.add('hidden')
+      this.commentsToggle?.classList.remove('is-active')
       this._syncSidePanels?.()
     })
 
