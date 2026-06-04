@@ -1097,7 +1097,7 @@ class TextEditorInstance {
           padding: 20px;
           font-family: 'Times New Roman', Times, serif;
           font-size: 12pt;
-          line-height: 1.5;
+          line-height: 1.15;
         }
         .te-page.te-page-auto {
           flex: 1;
@@ -1879,21 +1879,31 @@ class TextEditorInstance {
 
     if (this.pageSize === 'auto') {
       page.style.backgroundImage = ''
+      page.style.backgroundPosition = ''
       return
     }
 
+    // The page is one continuous sheet on screen, but the export paginates the
+    // CONTENT area = page height − top − bottom margins (the page's padding IS
+    // the margins, so text starts at margins.top). Space the end-of-page rule by
+    // that content height and shift it down by the top margin, so each divider
+    // lands exactly where the printed / exported page breaks. (Spacing by the
+    // full page height made each on-screen page hold ~one margin more than a real
+    // page, so exports broke earlier and the page looked "a bit smaller".)
     const pageH = this._orientedDims().height
+    const m = this.margins || { top: 0, bottom: 0 }
+    const contentH = Math.max(50, pageH - (m.top || 0) - (m.bottom || 0))
 
-    // Draw a subtle horizontal rule at every page-height interval
-    // The line sits 2px before the interval boundary and is 2px tall
+    // The line sits 2px before each content-height boundary and is 2px tall.
     page.style.backgroundImage = `repeating-linear-gradient(
       to bottom,
       transparent 0px,
-      transparent calc(${pageH}px - 2px),
-      #9ca3af calc(${pageH}px - 2px),
-      #9ca3af ${pageH}px,
-      transparent ${pageH}px
+      transparent calc(${contentH}px - 2px),
+      #9ca3af calc(${contentH}px - 2px),
+      #9ca3af ${contentH}px,
+      transparent ${contentH}px
     )`
+    page.style.backgroundPosition = `0 ${m.top || 0}px`
   }
 
   applyPageSize() {
