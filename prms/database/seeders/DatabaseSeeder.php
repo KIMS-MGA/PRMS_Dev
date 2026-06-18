@@ -15,6 +15,9 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        $this->call(PolicyProposalsSeeder::class);
+        $this->call([
+            SuperAdminSeeder::class,
+            PolicyProposalsSeeder::class,
+        ]);
     }
 }

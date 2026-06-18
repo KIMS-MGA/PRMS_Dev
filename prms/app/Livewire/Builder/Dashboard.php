@@ -89,8 +89,8 @@ class Dashboard extends Component
         ]);
 
         // TRC Schedule — records with date_scheduled set (filled after TRC Scheduling stage submission)
-        $trcSchedule = Record::whereRaw("JSON_UNQUOTE(JSON_EXTRACT(data, '$.date_scheduled')) IS NOT NULL")
-            ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(data, '$.date_scheduled')) != ''")
+        $trcSchedule = Record::whereRaw("JSON_EXTRACT(data, '$.date_scheduled') IS NOT NULL")
+            ->whereRaw("JSON_EXTRACT(data, '$.date_scheduled') != ''")
             ->with(['module'])
             ->get()
             ->when(!$this->showPastTrc, fn($c) => $c->filter(fn($r) => !now()->startOfDay()->gt(\Carbon\Carbon::parse($r->data['date_scheduled']))))
