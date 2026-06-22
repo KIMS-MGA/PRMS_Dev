@@ -7,6 +7,7 @@ use App\Models\WorkflowStage;
 use App\Notifications\DynamicNotification;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
 use Spatie\Permission\Models\Role;
 
@@ -20,6 +21,9 @@ beforeEach(function () {
 });
 
 it('sends reminder notifications to all configured recipient types', function () {
+    if (DB::connection()->getDriverName() === 'sqlite') {
+        $this->markTestSkipped('Requires MySQL JSON_UNQUOTE — not available on SQLite test driver.');
+    }
     $roleUser  = User::factory()->create();
     $namedUser = User::factory()->create();
 
@@ -61,6 +65,9 @@ it('sends reminder notifications to all configured recipient types', function ()
 });
 
 it('does not send reminders when no records match the target date', function () {
+    if (DB::connection()->getDriverName() === 'sqlite') {
+        $this->markTestSkipped('Requires MySQL JSON_UNQUOTE — not available on SQLite test driver.');
+    }
     $targetDate = Carbon::today()->addDays(3)->format('Y-m-d');
     $otherDate  = Carbon::today()->addDays(10)->format('Y-m-d'); // does not match
 
