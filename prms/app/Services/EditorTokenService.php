@@ -22,12 +22,15 @@ class EditorTokenService
     public function mint(User $user, string $prefix, array $fieldSlugs): array
     {
         // Revoke all previous tokens for this prefix to prevent accumulation.
-        $user->tokens()->where('name', 'like', $prefix . '%')->delete();
+        $safePrefix = str_replace(['%', '_'], ['\\%', '\\_'], $prefix);
+        $user->tokens()->where('name', 'like', $safePrefix . '%')->delete();
 
         // Clean up legacy single-part editor tokens (old 'editor-{slug}' format) older than 8 hours.
+        // The exclusion pattern 'editor-%-%' correctly excludes new-format tokens like 'editor-42-notes'
+        // (two segments after 'editor-'), while still matching old single-segment tokens like 'editor-notes'.
         $user->tokens()
             ->where('name', 'like', 'editor-%')
-            ->whereNotLike('name', 'editor-%-%-%')
+            ->whereNotLike('name', 'editor-%-%')
             ->where('created_at', '<', now()->subHours(8))
             ->delete();
 
@@ -53,7 +56,8 @@ class EditorTokenService
      */
     public function revoke(User $user, string $prefix): void
     {
-        $user->tokens()->where('name', 'like', $prefix . '%')->delete();
+        $safePrefix = str_replace(['%', '_'], ['\\%', '\\_'], $prefix);
+        $user->tokens()->where('name', 'like', $safePrefix . '%')->delete();
     }
 
     /**

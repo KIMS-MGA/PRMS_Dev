@@ -319,7 +319,11 @@ it('returnForRevision() happy path: record set to Returned, approval+history cre
     expect($service->createdHistories[0]['changes_json'])->toBe(['comment' => 'Needs more detail']);
     $creator->shouldHaveReceived('notify')->once();
 
-    $record->shouldHaveReceived('update')->with(Mockery::on(fn($d) => ($d['status'] ?? null) === 'Returned'))->once();
+    $record->shouldHaveReceived('update')->with(Mockery::on(function ($d) {
+        return ($d['status'] ?? null) === 'Returned'
+            && array_key_exists('stage_entered_at', $d)
+            && $d['stage_entered_at'] === null;
+    }))->once();
 });
 
 it('returnForRevision() throws InvalidArgumentException when comment is empty string', function () {
@@ -381,6 +385,19 @@ it('forwardToBranch() throws InvalidArgumentException when branch stage_id is em
         ->toThrow(\InvalidArgumentException::class);
 });
 
+it('forwardToBranch() throws RuntimeException when target stage does not exist', function () {
+    $branches     = [0 => ['stage_id' => 999, 'label' => 'Ghost Path']];
+    $currentStage = makeStage(id: 1, branches: $branches);
+    $record       = makeApprovalRecord(status: 'Submitted', currentStage: $currentStage, currentStageId: 1);
+    $user         = makeApprovalUser();
+
+    // stageQueryResults has null — simulates findStageById returning null for a deleted stage
+    $service = makeService(stageQueryResults: [null]);
+
+    expect(fn () => $service->forwardToBranch($record, $user, 0))
+        ->toThrow(\RuntimeException::class, 'Branch target stage ID 999 not found.');
+});
+
 // ── Tests: autoAdvance() ─────────────────────────────────────────────────────
 
 it('autoAdvance() non-final: advances to next stage, RecordApproval user_id null, action auto_advanced', function () {
@@ -421,4 +438,18 @@ it('autoAdvance() final stage: record marked Completed, creator notified', funct
     $creator->shouldHaveReceived('notify')->once();
 
     $record->shouldHaveReceived('update')->once();
+});
+
+it('autoAdvance() does nothing when record status is Completed', function () {
+    $record = makeApprovalRecord(status: 'Completed', moduleId: 1);
+
+    $notifications = Mockery::mock(NotificationService::class);
+    $notifications->shouldNotReceive('notifyRecipients');
+
+    $service = new TestableApprovalService($notifications, []);
+    $service->autoAdvance($record);
+
+    expect($service->createdApprovals)->toBeEmpty();
+    expect($service->createdHistories)->toBeEmpty();
+    $record->shouldNotHaveReceived('update');
 });

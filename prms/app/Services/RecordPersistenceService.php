@@ -42,7 +42,7 @@ class RecordPersistenceService
             }
 
             $value = $formData[$field->slug] ?? null;
-            $isUploadedFile = is_object($value) && method_exists($value, 'store');
+            $isUploadedFile = $value instanceof \Illuminate\Http\UploadedFile;
 
             if ($isUploadedFile && $field->versioning) {
                 // Versioned upload: prepend new version to the existing list

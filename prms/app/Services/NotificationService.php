@@ -9,7 +9,6 @@ use App\Notifications\DynamicNotification;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
-use Spatie\Permission\Models\Role;
 
 class NotificationService
 {

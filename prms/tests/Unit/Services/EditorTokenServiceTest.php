@@ -114,6 +114,31 @@ it('mint() with empty fieldSlugs returns empty array and creates no tokens', fun
     expect($user->tokens()->where('name', 'like', $prefix . '%')->count())->toBe(0);
 });
 
+it('mint() does NOT delete new-format tokens (editor-{id}-{slug}) older than 8 hours', function () {
+    $user    = makeEditorUser();
+    $service = new EditorTokenService();
+
+    // Manually create a new-format token that is "old" (created 9 hours ago)
+    // to simulate a long-running session for a different record.
+    $oldNewFormatToken = $user->createToken(
+        'editor-42-notes',
+        ['editor:read', 'editor:write'],
+        now()->addHours(8)
+    );
+
+    // Back-date created_at so it looks old enough for the legacy cleanup to target it
+    $user->tokens()
+        ->where('name', 'editor-42-notes')
+        ->update(['created_at' => now()->subHours(9)]);
+
+    // Mint tokens for a different prefix — should NOT delete editor-42-notes
+    $service->mint($user, 'editor-77-', ['body']);
+
+    expect(
+        $user->tokens()->where('name', 'editor-42-notes')->exists()
+    )->toBeTrue('New-format token editor-42-notes was incorrectly deleted by legacy cleanup');
+});
+
 // ── revoke() tests ────────────────────────────────────────────────────────────
 
 it('revoke() deletes tokens matching the prefix', function () {

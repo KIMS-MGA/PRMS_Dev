@@ -157,6 +157,7 @@ class ApprovalService
         $record->update([
             'status'           => RecordStatus::Returned->value,
             'current_stage_id' => null,
+            'stage_entered_at' => null,
         ]);
 
         $creator = $this->findCreator($record->created_by);
@@ -186,6 +187,10 @@ class ApprovalService
 
         $targetStage = $this->findStageById((int) $branch['stage_id']);
 
+        if ($targetStage === null) {
+            throw new \RuntimeException("Branch target stage ID {$branch['stage_id']} not found.");
+        }
+
         $this->createApproval([
             'record_id' => $record->id,
             'stage_id'  => $record->currentStage?->id,
@@ -200,23 +205,21 @@ class ApprovalService
             'action'       => ApprovalAction::Forwarded->value,
             'changes_json' => [
                 'path'     => $branch['label'],
-                'to_stage' => $targetStage?->name,
+                'to_stage' => $targetStage->name,
             ],
         ]);
 
         $record->update([
-            'status'           => $targetStage?->default_status ?? RecordStatus::UnderReview->value,
-            'current_stage_id' => $targetStage?->id,
+            'status'           => $targetStage->default_status ?? RecordStatus::UnderReview->value,
+            'current_stage_id' => $targetStage->id,
             'stage_entered_at' => now(),
         ]);
 
-        if ($targetStage) {
-            $this->notifyStage(
-                $targetStage,
-                $record,
-                "A record in {$this->moduleName($record)} has been forwarded ({$branch['label']}) and requires your action."
-            );
-        }
+        $this->notifyStage(
+            $targetStage,
+            $record,
+            "A record in {$this->moduleName($record)} has been forwarded ({$branch['label']}) and requires your action."
+        );
     }
 
     /**
@@ -224,6 +227,10 @@ class ApprovalService
      */
     public function autoAdvance(Record $record): void
     {
+        if (!in_array($record->status, [RecordStatus::Submitted->value, RecordStatus::UnderReview->value])) {
+            return;
+        }
+
         $currentStage = $record->currentStage;
         $isFinal      = $currentStage?->is_final_approval ?? true;
 
