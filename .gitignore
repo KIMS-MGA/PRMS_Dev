@@ -1,0 +1,10 @@
+prms/.env
+*.md
+prms/hocuspocus/node_modules/.bin/uuid
+/prms/hocuspocus/node_modules
+/prms/node_modules
+/prms/vendor
+prms/hocuspocus/.env
+prms/public/hot
+prms/public/storage
+prms/database/*.sql
