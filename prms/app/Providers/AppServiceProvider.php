@@ -17,6 +17,7 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Gate::before(function ($user, $ability) {
+            if ($ability === 'review') return null; // RecordPolicy::review() intentionally blocks super admin
             return $user->hasRole('super admin') ? true : null;
         });
 
