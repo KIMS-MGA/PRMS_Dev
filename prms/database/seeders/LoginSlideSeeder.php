@@ -83,7 +83,7 @@ class LoginSlideSeeder extends Seeder
                 'subtitle' => null,
                 'image_path' => 'login-slides/d58217b7-f19d-4f28-bc6c-6683f6f3930c.png',
                 'sort_order' => 7,
-                'is_active' => 1,
+                'is_active' => 0,
                 'created_at' => '2026-05-25 09:03:53',
                 'updated_at' => '2026-05-25 09:03:53',
             ],

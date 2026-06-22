@@ -6,6 +6,10 @@ use Illuminate\Database\Seeder;
 use App\Models\User;
 use Spatie\Permission\Models\Role;
 
+/**
+ * @deprecated Superseded by UserSeeder. Retained as a reference for env-driven production admin setup.
+ *             Not called by DatabaseSeeder.
+ */
 class SuperAdminSeeder extends Seeder
 {
     public function run(): void

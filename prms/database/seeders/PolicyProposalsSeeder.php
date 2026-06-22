@@ -9,6 +9,10 @@ use Illuminate\Database\Seeder;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 
+/**
+ * @deprecated Superseded by ModuleSeeder, ModuleFieldSeeder, RoleAndPermissionSeeder, WorkflowSeeder, and UserSeeder.
+ *             Do not add back to DatabaseSeeder — running this will insert conflicting field slugs.
+ */
 class PolicyProposalsSeeder extends Seeder
 {
     public function run(): void

@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
+use Spatie\Permission\PermissionRegistrar;
 
 class RoleAndPermissionSeeder extends Seeder
 {
@@ -30,13 +31,13 @@ class RoleAndPermissionSeeder extends Seeder
             ['id' => 5, 'name' => 'change-status-policy_proposals', 'guard_name' => 'web', 'created_at' => '2026-03-27 02:20:51', 'updated_at' => '2026-03-27 02:20:51'],
             ['id' => 6, 'name' => 'review-policy_proposals', 'guard_name' => 'web', 'created_at' => '2026-03-27 02:20:51', 'updated_at' => '2026-03-27 02:20:51'],
             ['id' => 7, 'name' => 'approve-policy_proposals', 'guard_name' => 'web', 'created_at' => '2026-03-27 02:20:51', 'updated_at' => '2026-03-27 02:20:51'],
-            ['id' => 15, 'name' => 'view-consolidated_policies', 'guard_name' => 'web', 'created_at' => '2026-03-27 05:31:26', 'updated_at' => '2026-03-27 05:31:26'],
-            ['id' => 16, 'name' => 'create-consolidated_policies', 'guard_name' => 'web', 'created_at' => '2026-03-27 05:31:26', 'updated_at' => '2026-03-27 05:31:26'],
-            ['id' => 17, 'name' => 'edit-consolidated_policies', 'guard_name' => 'web', 'created_at' => '2026-03-27 05:31:26', 'updated_at' => '2026-03-27 05:31:26'],
-            ['id' => 18, 'name' => 'delete-consolidated_policies', 'guard_name' => 'web', 'created_at' => '2026-03-27 05:31:26', 'updated_at' => '2026-03-27 05:31:26'],
-            ['id' => 19, 'name' => 'change-status-consolidated_policies', 'guard_name' => 'web', 'created_at' => '2026-03-27 05:31:26', 'updated_at' => '2026-03-27 05:31:26'],
-            ['id' => 20, 'name' => 'review-consolidated_policies', 'guard_name' => 'web', 'created_at' => '2026-03-27 05:31:26', 'updated_at' => '2026-03-27 05:31:26'],
-            ['id' => 21, 'name' => 'approve-consolidated_policies', 'guard_name' => 'web', 'created_at' => '2026-03-27 05:31:26', 'updated_at' => '2026-03-27 05:31:26'],
+            ['id' => 8,  'name' => 'view-consolidated_policies', 'guard_name' => 'web', 'created_at' => '2026-03-27 05:31:26', 'updated_at' => '2026-03-27 05:31:26'],
+            ['id' => 9,  'name' => 'create-consolidated_policies', 'guard_name' => 'web', 'created_at' => '2026-03-27 05:31:26', 'updated_at' => '2026-03-27 05:31:26'],
+            ['id' => 10, 'name' => 'edit-consolidated_policies', 'guard_name' => 'web', 'created_at' => '2026-03-27 05:31:26', 'updated_at' => '2026-03-27 05:31:26'],
+            ['id' => 11, 'name' => 'delete-consolidated_policies', 'guard_name' => 'web', 'created_at' => '2026-03-27 05:31:26', 'updated_at' => '2026-03-27 05:31:26'],
+            ['id' => 12, 'name' => 'change-status-consolidated_policies', 'guard_name' => 'web', 'created_at' => '2026-03-27 05:31:26', 'updated_at' => '2026-03-27 05:31:26'],
+            ['id' => 13, 'name' => 'review-consolidated_policies', 'guard_name' => 'web', 'created_at' => '2026-03-27 05:31:26', 'updated_at' => '2026-03-27 05:31:26'],
+            ['id' => 14, 'name' => 'approve-consolidated_policies', 'guard_name' => 'web', 'created_at' => '2026-03-27 05:31:26', 'updated_at' => '2026-03-27 05:31:26'],
         ];
 
         $roles = [
@@ -52,14 +53,16 @@ class RoleAndPermissionSeeder extends Seeder
             ['permission_id' => 2, 'role_id' => 2],
             ['permission_id' => 3, 'role_id' => 2],
             ['permission_id' => 7, 'role_id' => 3],
-            ['permission_id' => 15, 'role_id' => 3],
+            ['permission_id' => 8, 'role_id' => 3],
             ['permission_id' => 6, 'role_id' => 4],
-            ['permission_id' => 15, 'role_id' => 4],
-            ['permission_id' => 15, 'role_id' => 5],
+            ['permission_id' => 8, 'role_id' => 4],
+            ['permission_id' => 8, 'role_id' => 5],
         ];
 
         DB::table($permissionsTable)->insert($permissions);
         DB::table($rolesTable)->insert($roles);
         DB::table($roleHasPermissionsTable)->insert($roleHasPermissions);
+
+        app(PermissionRegistrar::class)->forgetCachedPermissions();
     }
 }
