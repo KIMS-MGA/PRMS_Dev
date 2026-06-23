@@ -3,19 +3,20 @@
 namespace App\Listeners;
 
 use App\Events\RecordSaved;
+use App\Jobs\DispatchWebhook;
 use App\Models\Workflow;
 use App\Models\WorkflowAction;
 use App\Models\Webhook;
-use App\Models\WebhookLog;
 use App\Models\User;
 use App\Notifications\DynamicNotification;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
-use Illuminate\Support\Facades\Http;
 use App\Mail\StageNotificationMail;
 
 class ProcessWorkflows
 {
+    private array $roleUserCache = [];
+
     public function handle(RecordSaved $event): void
     {
         $this->fireWebhooks($event);
@@ -102,32 +103,7 @@ class ProcessWorkflows
                 'timestamp' => now()->toIso8601String(),
             ];
 
-            try {
-                $headers = ['Content-Type' => 'application/json', 'X-PRMS-Event' => $event->trigger];
-                if ($webhook->secret) {
-                    $headers['X-PRMS-Signature'] = hash_hmac('sha256', json_encode($payload), $webhook->secret);
-                }
-
-                $response = Http::timeout(10)->withHeaders($headers)->post($webhook->url, $payload);
-
-                WebhookLog::create([
-                    'webhook_id'    => $webhook->id,
-                    'event'         => $event->trigger,
-                    'payload'       => $payload,
-                    'response_code' => $response->status(),
-                    'response_body' => substr($response->body(), 0, 1000),
-                    'success'       => $response->successful(),
-                ]);
-            } catch (\Throwable $e) {
-                WebhookLog::create([
-                    'webhook_id'    => $webhook->id,
-                    'event'         => $event->trigger,
-                    'payload'       => $payload,
-                    'response_code' => null,
-                    'response_body' => $e->getMessage(),
-                    'success'       => false,
-                ]);
-            }
+            DispatchWebhook::dispatch($webhook, $event->trigger, $payload);
         }
     }
 
@@ -146,7 +122,7 @@ class ProcessWorkflows
         $message  = $action->config_json['message'] ?? "Workflow: {$workflow->name} triggered in {$event->record->module?->name}";
         if (!$roleName) return;
 
-        foreach (User::role($roleName)->get() as $user) {
+        foreach ($this->getCachedUsersByRole($roleName) as $user) {
             $user->notify(new DynamicNotification($message, $event->record->id, $event->record->module?->slug));
         }
     }
@@ -168,6 +144,11 @@ class ProcessWorkflows
             $data[$field] = $value;
             $event->record->update(['data' => $data]);
         }
+    }
+
+    private function getCachedUsersByRole(string $roleName): \Illuminate\Support\Collection
+    {
+        return $this->roleUserCache[$roleName] ??= User::role($roleName)->get();
     }
 
     private function handleSendEmail(WorkflowAction $action, RecordSaved $event, Workflow $workflow): void
@@ -200,7 +181,7 @@ class ProcessWorkflows
                     $user = User::find($event->record->created_by);
                     $user?->notify(new DynamicNotification($message, $event->record->id, $moduleSlug, $subject, true));
                 } elseif ($type === 'role' && $value) {
-                    foreach (User::role($value)->get() as $user) {
+                    foreach ($this->getCachedUsersByRole($value) as $user) {
                         $user->notify(new DynamicNotification($message, $event->record->id, $moduleSlug, $subject, true));
                     }
                 } elseif ($type === 'specific_user' && $value) {

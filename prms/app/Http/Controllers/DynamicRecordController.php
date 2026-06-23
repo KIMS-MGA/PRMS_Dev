@@ -27,7 +27,7 @@ class DynamicRecordController extends Controller
             ->where('slug', $moduleSlug)
             ->firstOrFail();
 
-        if (!auth()->user()->can("view-{$moduleSlug}")) abort(403);
+        $this->authorize("view-{$moduleSlug}");
 
         // Merge source module fields if mirrored
         if ($module->source_module_id) {

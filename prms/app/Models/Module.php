@@ -34,4 +34,20 @@ class Module extends Model
     {
         return $this->hasMany(Workflow::class);
     }
+
+    public function resolvedModuleId(): int
+    {
+        return $this->source_module_id ?? $this->id;
+    }
+
+    public function resolvedFields(): \Illuminate\Database\Eloquent\Collection
+    {
+        if (!$this->source_module_id) {
+            return $this->fields;
+        }
+
+        $sourceModule = static::with('fields')->find($this->source_module_id);
+
+        return $sourceModule->fields->merge($this->fields);
+    }
 }

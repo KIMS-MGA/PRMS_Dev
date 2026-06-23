@@ -396,7 +396,7 @@ class TextEditorInstance {
     this.userColor      = container.dataset.userColor || '#6366f1'
     this.readonly       = container.dataset.readonly === '1'
     this.hiddenInput    = document.getElementById(`te-input-${this.fieldSlug}`)
-    this.initialContent = container._teContent || container._teTemplate || ''
+    this.initialContent = container._teContent || container.dataset.content || container._teTemplate || container.dataset.template || ''
     this.debounceTimer  = null
     this.lastContent    = ''
     this.margins        = { top: 50, right: 50, bottom: 50, left: 50 }
@@ -407,6 +407,7 @@ class TextEditorInstance {
     // per-browser preference; defaults to 100%.
     this.zoom           = parseFloat(localStorage.getItem(`te-zoom-${this.fieldSlug}`)) || 1
     this.suggestionMode = false
+    this.isSynced       = false
 
     // Expose instance on container so external code (commit hook, buttons) can sync
     container._teInstance = this
@@ -429,9 +430,10 @@ class TextEditorInstance {
         name: docName,
         document: this.ydoc,
         token: this.token,
-        onConnect:    () => this.updateStatus('connected'),
-        onDisconnect: () => this.updateStatus('disconnected'),
+        onConnect:    () => { this.isSynced = false; this.updateStatus('connected') },
+        onDisconnect: () => { this.isSynced = false; this.updateStatus('disconnected') },
         onSynced:     () => {
+          this.isSynced = true;
           this.updateStatus('synced')
           // If Hocuspocus returned an empty doc (never synced before — e.g. record
           // was created via the new-record form which has no Hocuspocus connection),
@@ -2867,25 +2869,6 @@ export function mountEditors() {
   })
 }
 
-// Push all editor values into Livewire right before every request so the
-// save/submit action always receives the latest editor HTML, regardless of
-// whether the user typed anything or just submitted the pre-filled template.
-document.addEventListener('livewire:initialized', () => {
-  Livewire.hook('commit', ({ component, commit }) => {
-    document.querySelectorAll('.text-editor-mount[data-te-mounted]').forEach(container => {
-      const instance = container._teInstance
-      if (!instance?.editor) return
-      const slug = container.dataset.field
-      const html = instance.editor.getHTML()
-      // Only sync to Livewire on form components (hiddenInput exists, not readonly)
-      if (!instance.hiddenInput || instance.readonly) return
-      instance.hiddenInput.value = html
-      // Also inject directly into the commit payload as a flat-key update
-      if (commit.updates) commit.updates[`data.${slug}`] = html
-      // Nested format fallback
-      if (commit.data?.data) commit.data.data[slug] = html
-    })
-  })
-})
+
 
 export { TextEditorInstance }

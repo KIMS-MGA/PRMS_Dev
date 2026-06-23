@@ -216,6 +216,13 @@
                                 <script>
                                 (function(){var el=document.currentScript.previousElementSibling;el._teContent=@json($record->data[$field->slug] ?? '');el._teTemplate=@json($teTemplate);}())
                                 </script>
+                                {{-- Hidden input so wire:model binds editor HTML to $editorData before markReviewDone fires --}}
+                                <input
+                                    type="text"
+                                    style="display: none;"
+                                    wire:model="editorData.{{ $field->slug }}"
+                                    id="te-input-{{ $field->slug }}"
+                                >
                                 @if($teRequireReview)
                                     @php
                                         $teReviewers = isset($reviewersByField[$field->slug])
@@ -451,6 +458,7 @@
                             {{ $isForwarded ? 'text-blue-600' : '' }}
                             {{ $ap->action === 'returned' ? 'text-orange-500' : '' }}
                             {{ $ap->action === 'submitted' ? 'text-indigo-600' : '' }}
+                            {{ $ap->action === 'reviewed' ? 'text-purple-600' : '' }}
                         ">{{ $actionLabel }}</span>
                         <div class="flex-1">
                             <span class="font-medium">{{ $ap->user?->name ?? 'System' }}</span>

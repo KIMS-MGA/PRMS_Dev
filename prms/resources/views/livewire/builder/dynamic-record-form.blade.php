@@ -205,7 +205,8 @@
                                 @endphp
                                 {{-- Hidden input lives OUTSIDE wire:ignore so Livewire can bind to it --}}
                                 <input
-                                    type="hidden"
+                                    type="text"
+                                    style="display: none;"
                                     wire:model="data.{{ $field->slug }}"
                                     id="te-input-{{ $field->slug }}"
                                 >
@@ -359,6 +360,10 @@
                                 class="bg-indigo-600 text-white px-6 py-2 rounded shadow-sm hover:bg-indigo-700 font-bold text-sm disabled:opacity-50">Save Record</button>
                         @endif
                     @endif
+                    @if($recordId && !in_array($record->status ?? '', ['Draft','Returned']))
+                        <button type="button" wire:click="save" wire:loading.attr="disabled"
+                            class="bg-indigo-600 text-white px-4 py-2 rounded shadow-sm hover:bg-indigo-700 font-bold text-sm disabled:opacity-50">Save Changes</button>
+                    @endif
                 </div>
             </form>
         </div>
@@ -383,6 +388,7 @@
                             {{ $ap->action === 'approved' ? 'text-green-600' : '' }}
                             {{ $ap->action === 'returned' ? 'text-orange-500' : '' }}
                             {{ $ap->action === 'submitted' ? 'text-blue-600' : '' }}
+                            {{ $ap->action === 'reviewed' ? 'text-purple-600' : '' }}
                         ">{{ ucfirst($ap->action) }}</span>
                         <div class="flex-1">
                             <span class="font-medium">{{ $ap->user?->name ?? 'System' }}</span>
