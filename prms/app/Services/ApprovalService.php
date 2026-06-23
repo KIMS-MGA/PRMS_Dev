@@ -408,8 +408,9 @@ class ApprovalService
                         sendEmail:  false,
                     ));
                 }
+                return;
             }
-            return;
+            // Role ID set but role deleted — fall through to permission-based fallback.
         }
 
         // No stage role configured — notify users with direct approve permission on this module.
