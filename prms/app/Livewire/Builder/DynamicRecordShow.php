@@ -128,6 +128,7 @@ class DynamicRecordShow extends Component
         if (! Gate::allows('review', $this->record)) abort(403);
 
         $this->reviews->recordReview($this->record->id, $fieldSlug, auth()->id());
+        $this->approvalService->logReview($this->record, auth()->user());
 
         $stage         = $this->record->currentStage;
         $reviewerCount = $stage ? $this->reviews->countStageReviewers($stage) : 0;

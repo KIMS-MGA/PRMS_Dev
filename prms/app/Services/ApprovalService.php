@@ -223,6 +223,20 @@ class ApprovalService
     }
 
     /**
+     * Log a reviewer's individual review action without advancing the record.
+     * Called by markReviewDone() for every reviewer so all appear in the Approval Log.
+     */
+    public function logReview(Record $record, User $user): void
+    {
+        $this->createApproval([
+            'record_id' => $record->id,
+            'stage_id'  => $record->current_stage_id,
+            'user_id'   => $user->id,
+            'action'    => ApprovalAction::Reviewed->value,
+        ]);
+    }
+
+    /**
      * Auto-advance a record past its current stage (called by the deadline scheduler).
      */
     public function autoAdvance(Record $record): void

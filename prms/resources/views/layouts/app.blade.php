@@ -168,8 +168,90 @@
             <!-- Right: bell + user profile -->
             <div class="flex items-center gap-1">
 
-                <!-- Notification Bell (Livewire — polls every 8 s for live count) -->
-                <livewire:notification-bell />
+                <!-- Notification Bell (pure Alpine — polls every 8 s via fetch, no Livewire) -->
+                <div class="relative"
+                     x-data="{
+                         bellOpen: false,
+                         unreadCount: 0,
+                         notifications: [],
+                         init() {
+                             this.fetchNotifications();
+                             setInterval(() => this.fetchNotifications(), 8000);
+                         },
+                         fetchNotifications() {
+                             fetch('{{ route('notifications.unread') }}', {
+                                 headers: {
+                                     'Accept': 'application/json',
+                                     'X-CSRF-TOKEN': document.querySelector('meta[name=\'csrf-token\']').content
+                                 }
+                             })
+                             .then(r => r.json())
+                             .then(data => {
+                                 this.unreadCount = data.count;
+                                 this.notifications = data.notifications;
+                             })
+                             .catch(() => {});
+                         },
+                         markAllRead() {
+                             fetch('{{ route('notifications.markAllRead') }}', {
+                                 method: 'POST',
+                                 headers: {
+                                     'Accept': 'application/json',
+                                     'X-CSRF-TOKEN': document.querySelector('meta[name=\'csrf-token\']').content
+                                 }
+                             })
+                             .then(() => {
+                                 this.unreadCount = 0;
+                                 this.notifications = [];
+                             })
+                             .catch(() => {});
+                         }
+                     }"
+                     @click.outside="bellOpen = false">
+
+                    <button @click="bellOpen = !bellOpen"
+                        class="relative p-2 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-full transition"
+                        aria-label="Notifications" title="Notifications">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M15 17h5l-1.405-2.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                        </svg>
+                        <span x-show="unreadCount > 0"
+                            class="absolute top-1 right-1 bg-red-500 text-white text-[8px] rounded-full w-3.5 h-3.5 flex items-center justify-center font-bold leading-none"
+                            x-text="unreadCount > 9 ? '9+' : unreadCount">
+                        </span>
+                    </button>
+
+                    <div x-show="bellOpen" x-transition x-cloak
+                        class="absolute top-11 right-0 w-72 bg-white rounded-lg shadow-xl border border-gray-200 z-50 overflow-hidden">
+                        <div class="flex items-center justify-between px-4 py-2.5 border-b bg-gray-50">
+                            <span class="text-xs font-bold text-gray-700 uppercase tracking-wide">Notifications</span>
+                            <button x-show="unreadCount > 0"
+                                @click="markAllRead()"
+                                class="text-[10px] text-indigo-600 hover:underline font-medium">
+                                Mark all read
+                            </button>
+                        </div>
+                        <div class="max-h-72 overflow-y-auto divide-y divide-gray-100">
+                            <template x-if="notifications.length === 0">
+                                <div class="px-4 py-6 text-center text-xs text-gray-400 italic">No new notifications</div>
+                            </template>
+                            <template x-for="notif in notifications" :key="notif.id">
+                                <a :href="notif.open_url"
+                                    class="flex items-start gap-3 px-4 py-3 hover:bg-indigo-50 transition-colors">
+                                    <span class="mt-1 w-2 h-2 rounded-full bg-indigo-500 flex-shrink-0"></span>
+                                    <span class="text-xs text-gray-700 leading-snug" x-text="notif.message"></span>
+                                </a>
+                            </template>
+                        </div>
+                        <div class="border-t px-4 py-2.5 bg-gray-50">
+                            <a href="{{ route('builder.notifications') }}"
+                                class="text-xs text-indigo-600 hover:underline font-medium">
+                                View all notifications →
+                            </a>
+                        </div>
+                    </div>
+                </div>
 
                 <!-- User Profile Dropdown -->
                 <div class="relative" x-data="{ profileOpen: false }" @click.outside="profileOpen = false">

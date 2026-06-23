@@ -197,6 +197,7 @@ class DynamicRecordForm extends Component
         if (! Gate::allows('review', $this->record)) abort(403);
 
         $this->reviews->recordReview($this->record->id, $fieldSlug, auth()->id());
+        $this->approvalService->logReview($this->record, auth()->user());
 
         $reviewerCount = $this->reviews->countPermissionReviewers($this->moduleSlug);
         $doneCount     = $this->reviews->countDone($this->record->id, $fieldSlug);

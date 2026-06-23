@@ -1,4 +1,5 @@
-<div class="relative" x-data="{ bellOpen: false }" @click.outside="bellOpen = false" wire:poll.8s>
+<div class="relative" x-data="{ bellOpen: false }" @click.outside="bellOpen = false"
+     x-init="setInterval(() => $wire.$refresh(), 8000)">
     <button @click="bellOpen = !bellOpen"
         class="relative p-2 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-full transition"
         aria-label="Notifications" title="Notifications">

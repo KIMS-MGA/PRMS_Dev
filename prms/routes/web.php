@@ -71,6 +71,18 @@ Route::get('/notifications', NotificationCenter::class)
     ->name('builder.notifications');
 
 Route::middleware(['auth', 'verified'])->group(function () {
+    Route::get('/notifications/unread', function () {
+        $notifications = auth()->user()->unreadNotifications()->latest()->take(10)->get();
+        return response()->json([
+            'count'         => $notifications->count(),
+            'notifications' => $notifications->map(fn ($n) => [
+                'id'       => $n->id,
+                'message'  => $n->data['message'] ?? '',
+                'open_url' => route('notifications.open', $n->id),
+            ]),
+        ]);
+    })->name('notifications.unread');
+
     Route::post('/notifications/{id}/read', function ($id) {
         auth()->user()->notifications()->where('id', $id)->update(['read_at' => now()]);
         return response()->noContent();

@@ -10,6 +10,7 @@ enum ApprovalAction: string
     case Approved     = 'approved';
     case Returned     = 'returned';
     case Forwarded    = 'forwarded';
+    case Reviewed     = 'reviewed';
     case AutoAdvanced = 'auto_advanced';
     case AutoApproved = 'auto_approved';
 }

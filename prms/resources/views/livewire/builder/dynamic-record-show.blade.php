@@ -451,6 +451,7 @@
                             {{ $isForwarded ? 'text-blue-600' : '' }}
                             {{ $ap->action === 'returned' ? 'text-orange-500' : '' }}
                             {{ $ap->action === 'submitted' ? 'text-indigo-600' : '' }}
+                            {{ $ap->action === 'reviewed' ? 'text-purple-600' : '' }}
                         ">{{ $actionLabel }}</span>
                         <div class="flex-1">
                             <span class="font-medium">{{ $ap->user?->name ?? 'System' }}</span>

@@ -383,6 +383,7 @@
                             {{ $ap->action === 'approved' ? 'text-green-600' : '' }}
                             {{ $ap->action === 'returned' ? 'text-orange-500' : '' }}
                             {{ $ap->action === 'submitted' ? 'text-blue-600' : '' }}
+                            {{ $ap->action === 'reviewed' ? 'text-purple-600' : '' }}
                         ">{{ ucfirst($ap->action) }}</span>
                         <div class="flex-1">
                             <span class="font-medium">{{ $ap->user?->name ?? 'System' }}</span>
