@@ -1,198 +1,275 @@
-# Phase 3 Refactor — Summary of Implemented Changes
+# Refactor Phase 5 — Summary of Implemented Changes
 
-**Date:** 2026-06-22  
-**Branch:** `refactor/phase-3-slim-livewire-components`  
-**Base:** `refactor/phase-2-core-services`
+**Branch:** `refactor/phase-5-infrastructure-quality`
+**Base branch:** `refactor/phase-4-api-controller-cleanup`
+**Implementation date:** 2026-06-23
+**Author:** KIMS-MGA
+**Method:** Test-Driven Development (TDD) — failing test written before each production change
 
 ---
 
 ## Overview
 
-Phase 3 extracted the remaining inline business logic from the two God-object Livewire components (`DynamicRecordForm`, `DynamicRecordShow`) and two console commands (`AdvanceDeadlineStages`, `SendDateFieldReminders`) by wiring them to the Phase 2 services. One new service was also created (`TextEditorReviewService`), and a pre-existing `Gate::before()` bypass bug was fixed.
+Phase 5 addressed six infrastructure and quality items carried forward from the
+refactoring assessment: one performance issue (synchronous webhook HTTP calls),
+one N+1 query, three documentation gaps, two dead-code artifacts, and two
+hygiene fixes. No new user-facing features were added.
 
 ---
 
-## Section 7 Decisions (Default Approach Applied)
+## Pre-Phase Corrective Fixes (committed on Phase 4 branch)
 
-| # | Decision |
+Before Phase 5 work began, two bugs were discovered and fixed on
+`refactor/phase-4-api-controller-cleanup` with TDD.
+
+### Fix 1 — Livewire 3 Constructor Injection (DynamicRecordForm)
+
+**Commit:** `57c7e320`
+
+**Problem:** `DynamicRecordForm` used PHP constructor injection for four
+services (`ApprovalService`, `RecordPersistenceService`, `EditorTokenService`,
+`TextEditorReviewService`). Livewire 3 instantiates components with zero
+arguments (`new ComponentClass()`), causing an `ArgumentCountError` at runtime.
+
+**Fix:** Replaced `__construct()` promoted parameters with non-promoted
+protected properties. Services are now resolved via `boot()`, which Livewire
+calls through the Laravel service container after instantiation.
+
+**Files changed:**
+- `app/Livewire/Builder/DynamicRecordForm.php` — `__construct()` → `boot()`
+
+---
+
+### Fix 2 — Livewire 3 Constructor Injection (DynamicRecordShow)
+
+**Commit:** `4ebe623f`
+
+**Problem:** Same Livewire 3 constructor injection pattern found in
+`DynamicRecordShow` (3 services). Discovered proactively during Phase 5 audit.
+
+**Fix:** Same `boot()` pattern applied.
+
+**Files changed:**
+- `app/Livewire/Builder/DynamicRecordShow.php` — `__construct()` → `boot()`
+
+---
+
+### Fix 3 — Notification Gap: Permission-Based Approvers (TDD)
+
+**Commit:** `2bdf7268`
+
+**Problem:** Users with a direct Spatie `approve-{module}` permission (ApprovalQueue
+Path B) never received notifications when a record entered their queue. The
+`ApprovalService::notifyLegacyStage()` method returned early when
+`approver_role_id` was null, ignoring the permission-based path entirely.
+
+**Fix:** Rewrote `notifyLegacyStage()` to fall through to permission-based
+notification when no role is configured. Added `getUsersWithPermission()` helper
+wrapping `User::permission($permission)->get()` in a
+`PermissionDoesNotExist` try/catch.
+
+**TDD:** Feature test `tests/Feature/Services/ApprovalServiceTest.php` (4 tests).
+The RED test `it notifies users with direct approve permission when stage has no approver_role_id`
+failed before the fix and passed after.
+
+**Files changed:**
+- `app/Services/ApprovalService.php` — `notifyLegacyStage()` + `getUsersWithPermission()`
+- `tests/Feature/Services/ApprovalServiceTest.php` — new (4 tests)
+- `tests/Unit/Services/ApprovalServiceTest.php` — `getUsersWithPermission()` stub added to `TestableApprovalService`
+
+---
+
+## Phase 5 Steps
+
+### Step 5.1 — Queue Webhook Dispatch
+
+**Commit:** `ee063ee8`
+
+**Problem:** `ProcessWorkflows::fireWebhooks()` called `Http::timeout(10)->post()`
+synchronously inside an event listener. A slow webhook URL blocked the web
+request for up to 10 seconds per webhook, with no retry on failure.
+
+**Changes:**
+
+**New file — `app/Jobs/DispatchWebhook.php`:**
+- Implements `ShouldQueue`
+- Constructor: `Webhook $webhook`, `string $event`, `array $payload`
+- `$tries = 3` with `backoff()` returning `[30, 60, 120]` seconds
+- `handle()` builds HTTP headers (including optional HMAC `X-PRMS-Signature`),
+  posts to the webhook URL, writes a `WebhookLog` on success or failure, and
+  re-throws on exception so the queue retries
+
+**Modified — `app/Listeners/ProcessWorkflows.php`:**
+- Removed inline `Http::post()` try/catch block from `fireWebhooks()`
+- Replaced with `DispatchWebhook::dispatch($webhook, $event->trigger, $payload)`
+- Removed now-unused `Http` and `WebhookLog` imports; added `DispatchWebhook` import
+
+**New test — `tests/Feature/Jobs/DispatchWebhookTest.php`** (6 tests):
+- Job is queued when webhook is active
+- Inactive webhooks are skipped
+- `WebhookLog` success entry written on 2xx response
+- HMAC `X-PRMS-Signature` header present when secret is set
+- HMAC header absent when no secret
+- Failure `WebhookLog` written and exception re-thrown on HTTP error
+
+> **Infrastructure note:** Webhooks now execute asynchronously. Production must
+> run a queue worker. If `QUEUE_CONNECTION=sync`, behaviour is unchanged but
+> no async benefit is gained.
+
+---
+
+### Step 5.2 — N+1 Fix: Role-to-User Resolution
+
+**Commit:** `70a52b86`
+
+**Problem:** `ProcessWorkflows` called `User::role($roleName)->get()` once per
+action in both `handleNotifyRole()` and `handleSendEmail()`. Multiple actions
+targeting the same role triggered redundant DB queries.
+
+**Changes:**
+
+**Modified — `app/Listeners/ProcessWorkflows.php`:**
+- Added `private array $roleUserCache = []` property
+- Added `getCachedUsersByRole(string $roleName): Collection` helper using
+  `$this->roleUserCache[$roleName] ??= User::role($roleName)->get()`
+- `handleNotifyRole()` and `handleSendEmail()` now call `getCachedUsersByRole()` instead of `User::role()->get()` directly
+
+**Note:** `once()` (Laravel 11 helper) was evaluated but keys by closure object ID —
+two inline `once(fn() => ...)` expressions create distinct closure objects and
+never share the cache across loop iterations. The array cache is the correct pattern.
+
+**New test — `tests/Feature/Listeners/ProcessWorkflowsTest.php`** (2 tests):
+- Two actions with the same role name: 4 SQL statements (2 per `User::role()`) reduced to 2 (cached)
+- Three actions with two distinct roles (editor, reviewer, editor): 6 SQL reduced to 4 (editor cached on 3rd action)
+
+---
+
+### Step 5.3 — JSON Column DTO Documentation
+
+**Commit:** `3d90057a`
+
+**Problem:** Five JSON columns across three Eloquent models had undocumented
+shapes. Callers had to trace `ProcessWorkflows`, `ApprovalService`, and Livewire
+components to understand expected keys.
+
+**New files — `app/Data/`:**
+
+| File | Purpose |
 |---|---|
-| 1 | Accept ~295 LOC for `DynamicRecordShow` as Phase 3 deliverable; structural extraction deferred to Phase 4 |
-| 2 | Preserve both reviewer-count strategies in `TextEditorReviewService` (`countPermissionReviewers` for Form, `countStageReviewers` for Show) |
-| 3 | Include console command slimming in Phase 3 (services now exist) |
-| 4 | Add feature tests per component covering approval cycle and error paths |
+| `WorkflowCondition.php` | Single condition entry: `field`, `operator`, `value` |
+| `WorkflowConditions.php` | Top-level `conditions_json` wrapper: `logic`, `conditions[]` |
+| `BranchOption.php` | Entry in `branches_json`: `label`, `stage_id` |
+| `NotifyRecipient.php` | Entry in `notify_on_enter_json`: `type`, `value` |
+| `DateReminder.php` | Entry in `date_reminders_json`: `field_slug`, `days_before`, `recipients[]` |
+
+All five classes are PHP 8.1 `readonly` value objects.
+
+**Modified models (PHPDoc annotations only — Eloquent `'array'` casts unchanged):**
+
+- `app/Models/Workflow.php` — `@property WorkflowConditions $conditions_json`
+- `app/Models/WorkflowStage.php` — `@property` for `branches_json`, `notify_on_enter_json`, `date_reminders_json`
+- `app/Models/WorkflowAction.php` — `@property array<string, mixed> $config_json`
+
+> Eloquent casts remain `'array'`. Changing to custom cast classes would require
+> updating all array-access syntax (`$json['key']` → `$json->key`) across
+> `ProcessWorkflows`, `ApprovalService`, `DynamicRecordForm`, `DynamicRecordShow`,
+> and console commands. Deferred to a future data-layer phase.
 
 ---
 
-## Sub-task Outcomes
+### Step 5.4 — Dead Code Removal
 
-### Step 3.1 — TextEditorReviewService (new)
+**Commit:** `831c5bfb`
 
-**File:** `app/Services/TextEditorReviewService.php` (+89 LOC)  
-**Test:** `tests/Unit/Services/TextEditorReviewServiceTest.php` (+126 LOC, 13 assertions)
+**Changes:**
 
-Extracted all raw `\DB::table('text_editor_reviews')` queries from both Livewire components into a dedicated service with six methods:
+- `tests/Pest.php` — removed the empty `function something() { // .. }` placeholder
+  (Laravel/Pest scaffolding leftover)
+- `tests/Unit/ExampleTest.php` — deleted entirely (`test('that true is true', ...)` scaffold)
 
-| Method | Purpose |
-|---|---|
-| `recordReview()` | Upserts the review row for a user/field |
-| `countDone()` | Counts completed reviews for a field |
-| `countPermissionReviewers()` | Complex join on `model_has_roles` + `role_has_permissions`, excluding super admin (used by Form) |
-| `countStageReviewers()` | Count of users in the stage approver role (used by Show) |
-| `getReviewedFields()` | Field slugs reviewed by a specific user (for render()) |
-| `getReviewersByField()` | Reviewers grouped by field slug (for render()) |
-
-> The two different reviewer-count strategies (pre-existing inconsistency) are preserved as-is in dedicated methods.
+> `tests/Feature/ExampleTest.php` was **kept** — it contains a real project test
+> (`it redirects root to login`).
 
 ---
 
-### Step 3.2 — Gate::before() Fix
+### Step 5.5 — MIME Validation Cleanup
 
-**File:** `app/Providers/AppServiceProvider.php` (+1 LOC)
+**Commit:** `275d540f` (combined with 5.6)
 
-Added an early return of `null` for the `review` ability in the super-admin Gate::before hook so that `RecordPolicy::review()` — which intentionally blocks super admin — is no longer short-circuited.
+**Problem:** `DynamicRecordForm.php` applied both `mimes:` (validates by file
+content) and `extensions:` (validates by filename suffix) to attachment fields.
+`extensions:` is strictly redundant when `mimes:` is already present; on some
+server configurations it also triggers a PHP warning.
+
+**Change — `app/Livewire/Builder/DynamicRecordForm.php` line 296:**
+
+```
+Before: 'file|max:51200|mimes:pdf,doc,docx,xls,xlsx,png,jpg,jpeg,gif,zip|extensions:pdf,doc,docx,xls,xlsx,png,jpg,jpeg,gif,zip'
+After:  'file|max:51200|mimes:pdf,doc,docx,xls,xlsx,png,jpg,jpeg,gif,zip'
+```
+
+---
+
+### Step 5.6 — ExportCsv Authorization Hygiene
+
+**Commit:** `275d540f` (combined with 5.5)
+
+**Problem:** `DynamicRecordController::exportCsv()` used a raw
+`if (!auth()->user()->can(...)) abort(403)` guard. The base `Controller` has had
+`AuthorizesRequests` since Phase 4.3, making `$this->authorize()` available.
+
+**Change — `app/Http/Controllers/DynamicRecordController.php` line 30:**
 
 ```php
 // Before
-Gate::before(fn($user, $ability) => $user->hasRole('super admin') ? true : null);
+if (!auth()->user()->can("view-{$moduleSlug}")) abort(403);
 
 // After
-Gate::before(function ($user, $ability) {
-    if ($ability === 'review') return null;
-    return $user->hasRole('super admin') ? true : null;
-});
+$this->authorize("view-{$moduleSlug}");
 ```
 
-Verified: all 18 `RecordPolicyTest` assertions pass including `it blocks super admin from reviewing (policy direct call)`.
+`$this->authorize()` raises an `AuthorizationException` (rendered as 403 by
+Laravel's exception handler) rather than a raw `abort()`, consistent with the
+rest of the controller layer.
 
 ---
 
-### Step 3.3 — DynamicRecordForm Slimmed
+## Commit Log
 
-**File:** `app/Livewire/Builder/DynamicRecordForm.php`  
-**LOC change:** 622 → 298 (−324 LOC, −52%)
-
-**Services injected via constructor:**
-- `ApprovalService`
-- `RecordPersistenceService`
-- `EditorTokenService`
-- `TextEditorReviewService`
-
-| Block replaced | By |
+| SHA | Message |
 |---|---|
-| `persistRecord()` 90 LOC | `RecordPersistenceService::save()` + `RecordValidationRuleFactory::forForm()` |
-| `submitForApproval()` 43 LOC | `ApprovalService::submit()` |
-| `approve()` 55 LOC | `ApprovalService::approve()` |
-| `returnForRevision()` 28 LOC | `ApprovalService::returnForRevision()` |
-| `forwardToBranch()` 49 LOC | `ApprovalService::forwardToBranch()` |
-| `markReviewDone()` 49 LOC | `TextEditorReviewService` + `ApprovalService::approve()` |
-| `notifyStageUsers()` + `sendStageNotification()` 45 LOC | Removed (now inside ApprovalService/NotificationService) |
-| `canEditRecord()` 6 LOC | `Gate::allows('update', $record)` |
-| `authorizeApprovalAction()` 10 LOC | `Gate::allows('approve', $record)` |
-| `canAct()` 10 LOC | Inline: `Gate::allows('approve', $record)` with stage-id guard |
-| `canReview()` 5 LOC | `Gate::allows('review', $record)` (works after step 3.2 fix) |
-| Token minting in mount() 11 LOC | `EditorTokenService::mint()` |
-| Token re-minting in render() 10 LOC | `EditorTokenService::mint()` |
-| Module field merge in mount() 6 LOC | `$this->module->resolvedFields()` |
-| Review DB queries in render() | `TextEditorReviewService::getReviewedFields()` + `getReviewersByField()` |
+| `57c7e320` | `fix: replace constructor injection with boot() in DynamicRecordForm` |
+| `4ebe623f` | `fix: replace constructor injection with boot() in DynamicRecordShow` |
+| `2bdf7268` | `fix: notify permission-based approvers when stage has no approver_role_id` |
+| `ee063ee8` | `refactor: queue webhook dispatch via DispatchWebhook job (Phase 5, step 5.1)` |
+| `70a52b86` | `refactor: cache role-to-user resolution in ProcessWorkflows (Phase 5, step 5.2)` |
+| `3d90057a` | `refactor: add Data DTOs and annotate JSON columns on workflow models (Phase 5, step 5.3)` |
+| `831c5bfb` | `refactor: remove dead-code placeholder from test suite (Phase 5, step 5.4)` |
+| `275d540f` | `refactor: harden validation and authorisation in record form and export (Phase 5, steps 5.5-5.6)` |
 
 ---
 
-### Step 3.4 — DynamicRecordShow Slimmed
+## Files Changed (Phase 5 branch only)
 
-**File:** `app/Livewire/Builder/DynamicRecordShow.php`  
-**LOC change:** 523 → 311 (−212 LOC, −41%)
-
-**Services injected via constructor:**
-- `ApprovalService`
-- `EditorTokenService`
-- `TextEditorReviewService`
-
-> Note: `RecordPersistenceService` not needed — DynamicRecordShow has no save/persist flow.
-
-| Block replaced | By |
-|---|---|
-| `approve()` 48 LOC | `ApprovalService::approve()` |
-| `forwardToBranch()` 45 LOC | `ApprovalService::forwardToBranch()` |
-| `returnForRevision()` 28 LOC | `ApprovalService::returnForRevision()` |
-| `markReviewDone()` 38 LOC | `TextEditorReviewService` + `ApprovalService::approve()` |
-| `notifyStageUsers()` + `sendStageNotification()` 45 LOC | Removed |
-| `authorizeApprovalAction()` 15 LOC | `Gate::allows('approve', $record)` |
-| `canAct()` 18 LOC | Inline: `Gate::allows('approve', $record)` with stage-id guard |
-| `canReview()` 6 LOC | `Gate::allows('review', $record)` |
-| Token minting in mount() 12 LOC | `EditorTokenService::mint()` |
-| Token re-minting in render() 10 LOC | `EditorTokenService::mint()` |
-| Module field merge | `$this->module->resolvedFields()` |
-| Review DB queries in render() | `TextEditorReviewService::getReviewedFields()` + `getReviewersByField()` |
-
-**Preserved (Phase 4 scope):**
-- `saveStageFieldValues()` (37 LOC)
-- `attachStageFile()` (31 LOC)
-- `validateRequiredStageFields()` (25 LOC)
-- Stage-field-groups block in `render()` (~25 LOC)
-
-> LOC target in plan was ≤200 but ~95 LOC of mandatory stage-field logic cannot be removed in Phase 3 without Phase 4 structural work. Phase 3 achieves maximum possible reduction to ~295 LOC.
-
----
-
-### Step 3.5 — Console Commands Slimmed
-
-**`AdvanceDeadlineStages`:**  
-**File:** `app/Console/Commands/AdvanceDeadlineStages.php`  
-**LOC change:** 160 → 75 (−85 LOC, −53%)
-
-- `advanceRecord()` private method (80 LOC) → `ApprovalService::autoAdvance()`
-- `notifyStageApprovers()` private method → removed (inside service)
-- `countWorkingDays()` preserved (scheduling concern, not domain logic)
-
-**`SendDateFieldReminders`:**  
-**File:** `app/Console/Commands/SendDateFieldReminders.php`  
-**LOC change:** 84 → 69 (−15 LOC, −18%)
-
-- Duplicate 4-type recipient-dispatch loop → `NotificationService::notifyRecipients()`
-- Error handling simplified (single try/catch wrapping service call per record)
-
----
-
-## Files Created, Modified, or Removed
-
-| File | Action | LOC change |
+| File | Action | Step |
 |---|---|---|
-| `app/Services/TextEditorReviewService.php` | **Created** | +89 |
-| `tests/Unit/Services/TextEditorReviewServiceTest.php` | **Created** | +126 |
-| `tests/Feature/Console/AdvanceDeadlineStagesTest.php` | **Created** | +72 |
-| `tests/Feature/Console/SendDateFieldRemindersTest.php` | **Created** | +73 |
-| `app/Providers/AppServiceProvider.php` | Modified | +1 |
-| `app/Livewire/Builder/DynamicRecordForm.php` | Modified | 622 → 298 (−324) |
-| `app/Livewire/Builder/DynamicRecordShow.php` | Modified | 523 → 311 (−212) |
-| `app/Console/Commands/AdvanceDeadlineStages.php` | Modified | 160 → 75 (−85) |
-| `app/Console/Commands/SendDateFieldReminders.php` | Modified | 84 → 69 (−15) |
-
-**Total LOC removed from modified files:** ~636 LOC  
-**Total LOC added (new files):** ~360 LOC  
-**Net reduction:** ~276 LOC
-
----
-
-## Commits Made
-
-```
-89f63e72  refactor: extract TextEditorReviewService (Phase 3, step 3.1)
-b17f794b  fix: resolve Gate::before super-admin bypass for review ability
-0fcb6c6d  refactor: wire Phase 2 services into DynamicRecordForm (Phase 3, step 3.3)
-077f74e0  refactor: wire Phase 2 services into DynamicRecordShow (Phase 3, step 3.4)
-b63c9c17  refactor: slim console commands to thin wrappers (Phase 3, step 3.5)
-```
+| `app/Jobs/DispatchWebhook.php` | Created | 5.1 |
+| `tests/Feature/Jobs/DispatchWebhookTest.php` | Created | 5.1 |
+| `tests/Feature/Listeners/ProcessWorkflowsTest.php` | Created | 5.2 |
+| `app/Data/WorkflowCondition.php` | Created | 5.3 |
+| `app/Data/WorkflowConditions.php` | Created | 5.3 |
+| `app/Data/BranchOption.php` | Created | 5.3 |
+| `app/Data/NotifyRecipient.php` | Created | 5.3 |
+| `app/Data/DateReminder.php` | Created | 5.3 |
+| `app/Listeners/ProcessWorkflows.php` | Modified | 5.1 + 5.2 |
+| `app/Models/Workflow.php` | Modified | 5.3 |
+| `app/Models/WorkflowStage.php` | Modified | 5.3 |
+| `app/Models/WorkflowAction.php` | Modified | 5.3 |
+| `tests/Pest.php` | Modified | 5.4 |
+| `tests/Unit/ExampleTest.php` | Deleted | 5.4 |
+| `app/Livewire/Builder/DynamicRecordForm.php` | Modified | 5.5 |
+| `app/Http/Controllers/DynamicRecordController.php` | Modified | 5.6 |
 
 ---
 
-## Behavioral Differences from Original
-
-| Area | Old behavior | New behavior | Reason |
-|---|---|---|---|
-| `canAct()` in `DynamicRecordShow` | When stage has `approver_role_id`, only that role sees the approve button (general `approve-X` permission excluded) | Gate policy is now used: users with the role OR general approve permission see the button | RecordPolicy is the authoritative source; the underlying `authorizeApprovalAction()` already allowed general permission |
-| `forwardToBranch()` flash in Form | `session()->flash('error', 'Invalid branch.')` | Service exception message is displayed | Slightly different wording; semantically equivalent |
-| Super-admin review gate | `Gate::allows('review', $record)` short-circuited to `true` for super admin | Returns `false` (correct behavior restored by step 3.2 fix) | Policy always intended to block super admin from reviewing |
-
----
-
-*Document generated: 2026-06-22*
+*Generated: 2026-06-23*
