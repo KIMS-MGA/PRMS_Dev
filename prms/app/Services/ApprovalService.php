@@ -357,6 +357,19 @@ class ApprovalService
         return User::role($roleName)->get();
     }
 
+    /**
+     * Return all users who hold the given Spatie permission (overridable in tests).
+     * Returns an empty collection when the permission has not been created yet.
+     */
+    protected function getUsersWithPermission(string $permission): Collection
+    {
+        try {
+            return User::permission($permission)->get();
+        } catch (\Spatie\Permission\Exceptions\PermissionDoesNotExist) {
+            return collect();
+        }
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     /**
@@ -378,23 +391,38 @@ class ApprovalService
 
     /**
      * Legacy notification path: notify approver-role users directly via DynamicNotification.
+     * When no approver role is configured on the stage, falls back to notifying all users
+     * who hold the approve-{module} Spatie permission directly — matching the ApprovalQueue
+     * visibility logic which uses the same two paths (role OR direct permission).
      */
     private function notifyLegacyStage(WorkflowStage $stage, Record $record, string $message): void
     {
-        if (! $stage->approver_role_id) {
+        if ($stage->approver_role_id) {
+            $role = $stage->approverRole;
+            if ($role) {
+                foreach ($this->getUsersByRole($role->name) as $user) {
+                    $user->notify(new DynamicNotification(
+                        message:    $message,
+                        recordId:   $record->id,
+                        moduleSlug: $record->module?->slug,
+                        sendEmail:  false,
+                    ));
+                }
+            }
             return;
         }
 
-        $role = $stage->approverRole;
-        if (! $role) {
+        // No stage role configured — notify users with direct approve permission on this module.
+        $moduleSlug = $record->module?->slug;
+        if (! $moduleSlug) {
             return;
         }
 
-        foreach ($this->getUsersByRole($role->name) as $user) {
+        foreach ($this->getUsersWithPermission("approve-{$moduleSlug}") as $user) {
             $user->notify(new DynamicNotification(
                 message:    $message,
                 recordId:   $record->id,
-                moduleSlug: $record->module?->slug,
+                moduleSlug: $moduleSlug,
                 sendEmail:  false,
             ));
         }

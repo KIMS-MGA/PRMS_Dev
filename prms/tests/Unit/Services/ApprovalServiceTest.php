@@ -180,6 +180,11 @@ class TestableApprovalService extends ApprovalService
     {
         return collect();
     }
+
+    protected function getUsersWithPermission(string $permission): \Illuminate\Support\Collection
+    {
+        return collect();
+    }
 }
 
 // ── Tests: submit() ───────────────────────────────────────────────────────────
