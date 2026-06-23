@@ -2,17 +2,26 @@ import { Server } from '@hocuspocus/server'
 import { Database } from '@hocuspocus/extension-database'
 import mysql from 'mysql2/promise'
 import fetch from 'node-fetch'
+import { config as loadEnv } from 'dotenv'
+import { fileURLToPath } from 'url'
+import { dirname, resolve } from 'path'
+
+// Load the parent Laravel .env so DB_HOST, APP_URL, etc. are available
+// without having to duplicate them in a separate hocuspocus .env file.
+const __dirname = dirname(fileURLToPath(import.meta.url))
+loadEnv({ path: resolve(__dirname, '../.env') })
 
 const db = await mysql.createPool({
-  host: process.env.DB_HOST || 'mysql',
+  host:     process.env.DB_HOST     || '127.0.0.1',
   database: process.env.DB_DATABASE || 'prms',
-  user: process.env.DB_USER || 'prms',
-  password: process.env.DB_PASSWORD || 'secret',
+  // Laravel uses DB_USERNAME; fall back to DB_USER for Docker environments.
+  user:     process.env.DB_USERNAME || process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD ?? '',
   waitForConnections: true,
   connectionLimit: 10,
 })
 
-const APP_URL = process.env.APP_URL || 'http://app'
+const APP_URL = process.env.APP_URL || 'http://localhost:8000'
 
 // Parse document name: "record-{id}-field-{slug}"
 function parseDocName(name) {
@@ -21,8 +30,8 @@ function parseDocName(name) {
   return { recordId: match[1], fieldSlug: match[2] }
 }
 
-// Table prefix used by Laravel (from DB_PREFIX env or default 'jea_')
-const TABLE_PREFIX = process.env.DB_PREFIX || 'jea_'
+// Table prefix used by Laravel (from DB_PREFIX env; empty string is a valid value).
+const TABLE_PREFIX = process.env.DB_PREFIX ?? ''
 
 const server = Server.configure({
   port: 1234,
