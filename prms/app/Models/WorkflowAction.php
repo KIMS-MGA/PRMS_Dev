@@ -4,6 +4,9 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
+/**
+ * @property array<string, mixed> $config_json
+ */
 class WorkflowAction extends Model
 {
     protected $fillable = ['workflow_id', 'type', 'config_json'];

@@ -2,9 +2,18 @@
 
 namespace App\Models;
 
+use App\Data\BranchOption;
+use App\Data\DateReminder;
+use App\Data\NotifyRecipient;
 use Illuminate\Database\Eloquent\Model;
 use Spatie\Permission\Models\Role;
 
+/**
+ * @property array<BranchOption>  $branches_json
+ * @property array<string>        $stage_fields_json
+ * @property array<NotifyRecipient> $notify_on_enter_json
+ * @property array<DateReminder>  $date_reminders_json
+ */
 class WorkflowStage extends Model
 {
     protected $fillable = [
