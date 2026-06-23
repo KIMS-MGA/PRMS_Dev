@@ -15,6 +15,8 @@ use App\Mail\StageNotificationMail;
 
 class ProcessWorkflows
 {
+    private array $roleUserCache = [];
+
     public function handle(RecordSaved $event): void
     {
         $this->fireWebhooks($event);
@@ -120,7 +122,7 @@ class ProcessWorkflows
         $message  = $action->config_json['message'] ?? "Workflow: {$workflow->name} triggered in {$event->record->module?->name}";
         if (!$roleName) return;
 
-        foreach (User::role($roleName)->get() as $user) {
+        foreach ($this->getCachedUsersByRole($roleName) as $user) {
             $user->notify(new DynamicNotification($message, $event->record->id, $event->record->module?->slug));
         }
     }
@@ -142,6 +144,11 @@ class ProcessWorkflows
             $data[$field] = $value;
             $event->record->update(['data' => $data]);
         }
+    }
+
+    private function getCachedUsersByRole(string $roleName): \Illuminate\Support\Collection
+    {
+        return $this->roleUserCache[$roleName] ??= User::role($roleName)->get();
     }
 
     private function handleSendEmail(WorkflowAction $action, RecordSaved $event, Workflow $workflow): void
@@ -174,7 +181,7 @@ class ProcessWorkflows
                     $user = User::find($event->record->created_by);
                     $user?->notify(new DynamicNotification($message, $event->record->id, $moduleSlug, $subject, true));
                 } elseif ($type === 'role' && $value) {
-                    foreach (User::role($value)->get() as $user) {
+                    foreach ($this->getCachedUsersByRole($value) as $user) {
                         $user->notify(new DynamicNotification($message, $event->record->id, $moduleSlug, $subject, true));
                     }
                 } elseif ($type === 'specific_user' && $value) {
