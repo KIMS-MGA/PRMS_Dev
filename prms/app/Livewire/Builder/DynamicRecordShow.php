@@ -31,11 +31,19 @@ class DynamicRecordShow extends Component
     public $stageFieldValues   = [];
     protected array $editorTokens = [];
 
-    public function __construct(
-        private readonly ApprovalService $approvalService,
-        private readonly EditorTokenService $editorToken,
-        private readonly TextEditorReviewService $reviews,
-    ) {}
+    protected ApprovalService $approvalService;
+    protected EditorTokenService $editorToken;
+    protected TextEditorReviewService $reviews;
+
+    public function boot(
+        ApprovalService $approvalService,
+        EditorTokenService $editorToken,
+        TextEditorReviewService $reviews,
+    ): void {
+        $this->approvalService = $approvalService;
+        $this->editorToken     = $editorToken;
+        $this->reviews         = $reviews;
+    }
 
     public function mount($moduleSlug, $record): void
     {
