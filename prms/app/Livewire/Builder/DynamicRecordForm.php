@@ -208,7 +208,7 @@ class DynamicRecordForm extends Component
             if ($this->record && $this->data) {
                 $this->record->update(['data' => $this->data, 'updated_by' => auth()->id()]);
             }
-            $this->approvalService->approve($this->record, auth()->user(), '');
+            $this->approvalService->approve($this->record, auth()->user(), '', false);
             $this->status = $this->record->fresh()->status;
             $this->approvalComment = '';
             $msg = $this->record->status === 'Completed'

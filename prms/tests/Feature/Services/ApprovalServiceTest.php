@@ -135,3 +135,86 @@ it('does not notify the submitter as an approver when they also hold the approve
 
     expect(true)->toBeTrue(); // Submission completed without exception
 });
+
+it('notifies both configured recipients and legacy stage role users when notify_on_enter_json is populated', function () {
+    $role = Role::firstOrCreate(['name' => 'trc-reviewer-notify', 'guard_name' => 'web']);
+    $approver = User::factory()->create();
+    $approver->assignRole('trc-reviewer-notify');
+
+    $recipient = User::factory()->create();
+    Permission::firstOrCreate(['name' => 'view-notify-test', 'guard_name' => 'web']);
+    $recipient->givePermissionTo('view-notify-test');
+
+    WorkflowStage::create([
+        'module_id'            => $this->module->id,
+        'name'                 => 'Review',
+        'order'                => 1,
+        'is_final_approval'    => true,
+        'approver_role_id'     => $role->id,
+        'notify_on_enter_json' => [['type' => 'specific_user', 'value' => (string) $recipient->id]],
+    ]);
+
+    $record = Record::create([
+        'module_id'  => $this->module->id,
+        'data'       => [],
+        'status'     => 'Draft',
+        'created_by' => $this->submitter->id,
+        'updated_by' => $this->submitter->id,
+    ]);
+
+    app(ApprovalService::class)->submit($record, $this->submitter);
+
+    // Both should receive database notifications
+    $this->assertDatabaseHas('notifications', [
+        'notifiable_type' => User::class,
+        'notifiable_id'   => $recipient->id,
+        'type'            => DynamicNotification::class,
+    ]);
+
+    $this->assertDatabaseHas('notifications', [
+        'notifiable_type' => User::class,
+        'notifiable_id'   => $approver->id,
+        'type'            => DynamicNotification::class,
+    ]);
+});
+
+it('advances stage without creating Approved action when logApproval is false', function () {
+    $reviewer = User::factory()->create();
+
+    $stage = WorkflowStage::create([
+        'module_id'         => $this->module->id,
+        'name'              => 'First Stage',
+        'order'             => 1,
+        'is_final_approval' => false,
+    ]);
+
+    $nextStage = WorkflowStage::create([
+        'module_id'         => $this->module->id,
+        'name'              => 'Second Stage',
+        'order'             => 2,
+        'is_final_approval' => true,
+    ]);
+
+    $record = Record::create([
+        'module_id'        => $this->module->id,
+        'data'             => [],
+        'status'           => 'Under Review',
+        'current_stage_id' => $stage->id,
+        'created_by'       => $this->submitter->id,
+        'updated_by'       => $this->submitter->id,
+    ]);
+
+    app(ApprovalService::class)->approve($record, $reviewer, '', false);
+
+    // Record should advance to the next stage
+    $record->refresh();
+    expect($record->current_stage_id)->toBe($nextStage->id);
+    expect($record->status)->toBe('Under Review');
+
+    // But no Approved logs should be written in record_approvals table
+    $this->assertDatabaseMissing('record_approvals', [
+        'record_id' => $record->id,
+        'user_id'   => $reviewer->id,
+        'action'    => 'approved',
+    ]);
+});

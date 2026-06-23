@@ -72,24 +72,26 @@ class ApprovalService
     /**
      * Approve the record at its current stage, advancing it or marking it Completed.
      */
-    public function approve(Record $record, User $user, string $comment = ''): void
+    public function approve(Record $record, User $user, string $comment = '', bool $logApproval = true): void
     {
         $currentStage = $record->currentStage;
 
-        $this->createApproval([
-            'record_id' => $record->id,
-            'stage_id'  => $currentStage?->id,
-            'user_id'   => $user->id,
-            'action'    => ApprovalAction::Approved->value,
-            'comment'   => $comment ?: null,
-        ]);
+        if ($logApproval) {
+            $this->createApproval([
+                'record_id' => $record->id,
+                'stage_id'  => $currentStage?->id,
+                'user_id'   => $user->id,
+                'action'    => ApprovalAction::Approved->value,
+                'comment'   => $comment ?: null,
+            ]);
 
-        $this->createHistory([
-            'record_id'    => $record->id,
-            'user_id'      => $user->id,
-            'action'       => ApprovalAction::Approved->value,
-            'changes_json' => $comment ? ['comment' => $comment] : null,
-        ]);
+            $this->createHistory([
+                'record_id'    => $record->id,
+                'user_id'      => $user->id,
+                'action'       => ApprovalAction::Approved->value,
+                'changes_json' => $comment ? ['comment' => $comment] : null,
+            ]);
+        }
 
         $isFinal = ! $currentStage || $currentStage->is_final_approval;
 
@@ -396,7 +398,6 @@ class ApprovalService
 
         if (! empty($configured)) {
             $this->notifications->notifyRecipients($configured, $record, $message);
-            return;
         }
 
         // Legacy fallback — notify approver role users directly (bypasses NotificationService).
