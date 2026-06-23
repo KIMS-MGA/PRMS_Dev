@@ -22,6 +22,11 @@ mountEditors();
 // saved content on the very first network round-trip.
 Livewire.hook('commit', ({ component, commit }) => {
     document.querySelectorAll('.text-editor-mount[data-te-mounted]').forEach(container => {
+        // Only sync editors that live inside the component firing this commit.
+        // Without this guard the hook would inject data.{slug} into every other
+        // component's payload (e.g. the NotificationBell poll every 8 s), causing
+        // Livewire to reject the request with a 422 for unknown properties.
+        if (!component.el.contains(container)) return
         const instance = container._teInstance
         if (!instance?.editor || !instance.hiddenInput) return
         if (container.dataset.readonly === '1') return
