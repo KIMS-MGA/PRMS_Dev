@@ -360,6 +360,10 @@
                                 class="bg-indigo-600 text-white px-6 py-2 rounded shadow-sm hover:bg-indigo-700 font-bold text-sm disabled:opacity-50">Save Record</button>
                         @endif
                     @endif
+                    @if($recordId && !in_array($record->status ?? '', ['Draft','Returned']))
+                        <button type="button" wire:click="save" wire:loading.attr="disabled"
+                            class="bg-indigo-600 text-white px-4 py-2 rounded shadow-sm hover:bg-indigo-700 font-bold text-sm disabled:opacity-50">Save Changes</button>
+                    @endif
                 </div>
             </form>
         </div>
