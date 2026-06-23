@@ -2869,29 +2869,6 @@ export function mountEditors() {
   })
 }
 
-// Push all editor values into Livewire right before every request so the
-// save/submit action always receives the latest editor HTML, regardless of
-// whether the user typed anything or just submitted the pre-filled template.
-document.addEventListener('livewire:initialized', () => {
-  Livewire.hook('commit', ({ component, commit }) => {
-    document.querySelectorAll('.text-editor-mount[data-te-mounted]').forEach(container => {
-      const instance = container._teInstance
-      if (!instance?.editor) return
-      const slug = container.dataset.field
-      const html = instance.editor.getHTML()
-      // Only sync to Livewire on form components (hiddenInput exists, not readonly)
-      if (!instance.hiddenInput || instance.readonly) return
 
-      // Abort if existing record editor is not synced yet (prevents blank editor overwriting DB on offline/errors)
-      const isNew = instance.recordId === 'new'
-      if (!isNew && !instance.isSynced) return
-      instance.hiddenInput.value = html
-      // Also inject directly into the commit payload as a flat-key update
-      if (commit.updates) commit.updates[`data.${slug}`] = html
-      // Nested format fallback
-      if (commit.data?.data) commit.data.data[slug] = html
-    })
-  })
-})
 
 export { TextEditorInstance }
