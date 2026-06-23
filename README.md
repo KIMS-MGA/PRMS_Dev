@@ -1,198 +1,139 @@
-# Phase 3 Refactor — Summary of Implemented Changes
+# Phase 4 Refactor — Summary of Implemented Changes
 
-**Date:** 2026-06-22  
-**Branch:** `refactor/phase-3-slim-livewire-components`  
-**Base:** `refactor/phase-2-core-services`
+**Date:** 2026-06-23
+**Branch:** `refactor/phase-4-api-controller-cleanup`
+**Base branch:** `refactor/phase-3-slim-livewire-components`
 
 ---
 
 ## Overview
 
-Phase 3 extracted the remaining inline business logic from the two God-object Livewire components (`DynamicRecordForm`, `DynamicRecordShow`) and two console commands (`AdvanceDeadlineStages`, `SendDateFieldReminders`) by wiring them to the Phase 2 services. One new service was also created (`TextEditorReviewService`), and a pre-existing `Gate::before()` bypass bug was fixed.
+Phase 4 extracted the remaining inline business logic from the HTTP layer into testable classes, closed a SQL injection surface (P3-A), and replaced `TextEditorController`'s duplicated inline authorization helper with the `RecordPolicy` established in Phase 1.
 
 ---
 
-## Section 7 Decisions (Default Approach Applied)
+## Step 4.1 — RecordRepository (P2-B + P3-A)
 
-| # | Decision |
-|---|---|
-| 1 | Accept ~295 LOC for `DynamicRecordShow` as Phase 3 deliverable; structural extraction deferred to Phase 4 |
-| 2 | Preserve both reviewer-count strategies in `TextEditorReviewService` (`countPermissionReviewers` for Form, `countStageReviewers` for Show) |
-| 3 | Include console command slimming in Phase 3 (services now exist) |
-| 4 | Add feature tests per component covering approval cycle and error paths |
+### Created: `app/Repositories/RecordRepository.php`
 
----
+Extracted the 50-line search/filter/sort query from `DynamicApiController::index()` into `RecordRepository::search(Module $module, array $filters): LengthAwarePaginator`.
 
-## Sub-task Outcomes
+**Behaviors preserved:**
+- `status` exact-match filter
+- Full-text JSON search across all module fields via `JSON_UNQUOTE/JSON_EXTRACT`
+- `date_from` / `date_to` date range filters
+- `assigned_to` / `created_by` user filters
+- `sort_by` allow-list (`created_at`, `updated_at`, `status`) + `sort_dir`
+- `per_page` capped at 100
 
-### Step 3.1 — TextEditorReviewService (new)
-
-**File:** `app/Services/TextEditorReviewService.php` (+89 LOC)  
-**Test:** `tests/Unit/Services/TextEditorReviewServiceTest.php` (+126 LOC, 13 assertions)
-
-Extracted all raw `\DB::table('text_editor_reviews')` queries from both Livewire components into a dedicated service with six methods:
-
-| Method | Purpose |
-|---|---|
-| `recordReview()` | Upserts the review row for a user/field |
-| `countDone()` | Counts completed reviews for a field |
-| `countPermissionReviewers()` | Complex join on `model_has_roles` + `role_has_permissions`, excluding super admin (used by Form) |
-| `countStageReviewers()` | Count of users in the stage approver role (used by Show) |
-| `getReviewedFields()` | Field slugs reviewed by a specific user (for render()) |
-| `getReviewersByField()` | Reviewers grouped by field slug (for render()) |
-
-> The two different reviewer-count strategies (pre-existing inconsistency) are preserved as-is in dedicated methods.
-
----
-
-### Step 3.2 — Gate::before() Fix
-
-**File:** `app/Providers/AppServiceProvider.php` (+1 LOC)
-
-Added an early return of `null` for the `review` ability in the super-admin Gate::before hook so that `RecordPolicy::review()` — which intentionally blocks super admin — is no longer short-circuited.
-
+**P3-A fix:** Added slug guard before JSON path interpolation:
 ```php
-// Before
-Gate::before(fn($user, $ability) => $user->hasRole('super admin') ? true : null);
-
-// After
-Gate::before(function ($user, $ability) {
-    if ($ability === 'review') return null;
-    return $user->hasRole('super admin') ? true : null;
-});
+if (!preg_match('/^[a-z0-9_\-]+$/', $field->slug)) continue;
 ```
 
-Verified: all 18 `RecordPolicyTest` assertions pass including `it blocks super admin from reviewing (policy direct call)`.
+### Created: `tests/Feature/Api/DynamicApiControllerTest.php`
+
+New feature tests (9 tests, 1 skipped on SQLite):
+- `it returns paginated records for a module`
+- `it filters by status`
+- `it filters by date range` *(skipped on SQLite — requires MySQL JSON_UNQUOTE)*
+- `it filters by created_by`
+- `it applies default sorting (created_at desc)`
+- `it respects per_page cap at 100`
+- `it returns 403 when token lacks read ability`
+- `it stores a record via api`
+- `it updates a record via api`
 
 ---
 
-### Step 3.3 — DynamicRecordForm Slimmed
+## Step 4.2 — Form Requests (P2-E)
 
-**File:** `app/Livewire/Builder/DynamicRecordForm.php`  
-**LOC change:** 622 → 298 (−324 LOC, −52%)
+### Created: `app/Http/Requests/Api/StoreRecordRequest.php`
+### Created: `app/Http/Requests/Api/UpdateRecordRequest.php`
 
-**Services injected via constructor:**
-- `ApprovalService`
-- `RecordPersistenceService`
-- `EditorTokenService`
-- `TextEditorReviewService`
+Both Form Requests:
+- Resolve the module via `$this->route('moduleSlug')` inside `rules()`
+- Delegate to `RecordValidationRuleFactory::forApi()` (from `App\Support`)
+- Return `authorize(): true` — authorization remains in the controller's `checkAbility()` (dual Sanctum + Spatie check, per Section 7.1 decision)
 
-| Block replaced | By |
-|---|---|
-| `persistRecord()` 90 LOC | `RecordPersistenceService::save()` + `RecordValidationRuleFactory::forForm()` |
-| `submitForApproval()` 43 LOC | `ApprovalService::submit()` |
-| `approve()` 55 LOC | `ApprovalService::approve()` |
-| `returnForRevision()` 28 LOC | `ApprovalService::returnForRevision()` |
-| `forwardToBranch()` 49 LOC | `ApprovalService::forwardToBranch()` |
-| `markReviewDone()` 49 LOC | `TextEditorReviewService` + `ApprovalService::approve()` |
-| `notifyStageUsers()` + `sendStageNotification()` 45 LOC | Removed (now inside ApprovalService/NotificationService) |
-| `canEditRecord()` 6 LOC | `Gate::allows('update', $record)` |
-| `authorizeApprovalAction()` 10 LOC | `Gate::allows('approve', $record)` |
-| `canAct()` 10 LOC | Inline: `Gate::allows('approve', $record)` with stage-id guard |
-| `canReview()` 5 LOC | `Gate::allows('review', $record)` (works after step 3.2 fix) |
-| Token minting in mount() 11 LOC | `EditorTokenService::mint()` |
-| Token re-minting in render() 10 LOC | `EditorTokenService::mint()` |
-| Module field merge in mount() 6 LOC | `$this->module->resolvedFields()` |
-| Review DB queries in render() | `TextEditorReviewService::getReviewedFields()` + `getReviewersByField()` |
+### Modified: `app/Http/Controllers/Api/DynamicApiController.php`
+
+- Injected `RecordRepository` via constructor DI
+- `index()` now calls `$this->repository->search($module, $request->only([...]))`
+- `store()` type-hints `StoreRecordRequest`; removed inline `$request->validate()`
+- `update()` type-hints `UpdateRecordRequest`; removed inline `$request->validate()`
+- Removed private `fieldRules()` method (16 LOC) — superseded by `RecordValidationRuleFactory::forApi()`
+
+**LOC:** 173 → 109 (−64)
 
 ---
 
-### Step 3.4 — DynamicRecordShow Slimmed
+## Step 4.3 — TextEditorController → RecordPolicy (P3-E)
 
-**File:** `app/Livewire/Builder/DynamicRecordShow.php`  
-**LOC change:** 523 → 311 (−212 LOC, −41%)
+### Modified: `app/Http/Controllers/TextEditorController.php`
 
-**Services injected via constructor:**
-- `ApprovalService`
-- `EditorTokenService`
-- `TextEditorReviewService`
+Replaced the 20-line `authorizeRecordAccess()` helper with `$this->authorize('viewEditor', $record)` in all 8 public methods that accept a `Record` parameter:
+- `getHistory`, `storeHistory`, `getComments`, `storeReply`, `storeComment`, `storeImage`, `resolveComment`, `getReviewStatus`
 
-> Note: `RecordPersistenceService` not needed — DynamicRecordShow has no save/persist flow.
+The private `authorizeRecordAccess()` method was removed entirely.
 
-| Block replaced | By |
-|---|---|
-| `approve()` 48 LOC | `ApprovalService::approve()` |
-| `forwardToBranch()` 45 LOC | `ApprovalService::forwardToBranch()` |
-| `returnForRevision()` 28 LOC | `ApprovalService::returnForRevision()` |
-| `markReviewDone()` 38 LOC | `TextEditorReviewService` + `ApprovalService::approve()` |
-| `notifyStageUsers()` + `sendStageNotification()` 45 LOC | Removed |
-| `authorizeApprovalAction()` 15 LOC | `Gate::allows('approve', $record)` |
-| `canAct()` 18 LOC | Inline: `Gate::allows('approve', $record)` with stage-id guard |
-| `canReview()` 6 LOC | `Gate::allows('review', $record)` |
-| Token minting in mount() 12 LOC | `EditorTokenService::mint()` |
-| Token re-minting in render() 10 LOC | `EditorTokenService::mint()` |
-| Module field merge | `$this->module->resolvedFields()` |
-| Review DB queries in render() | `TextEditorReviewService::getReviewedFields()` + `getReviewersByField()` |
+**LOC:** 273 → 251 (−22)
 
-**Preserved (Phase 4 scope):**
-- `saveStageFieldValues()` (37 LOC)
-- `attachStageFile()` (31 LOC)
-- `validateRequiredStageFields()` (25 LOC)
-- Stage-field-groups block in `render()` (~25 LOC)
+### Modified: `app/Http/Controllers/Controller.php`
 
-> LOC target in plan was ≤200 but ~95 LOC of mandatory stage-field logic cannot be removed in Phase 3 without Phase 4 structural work. Phase 3 achieves maximum possible reduction to ~295 LOC.
+Added `use Illuminate\Foundation\Auth\Access\AuthorizesRequests;` trait to the abstract base Controller, enabling `$this->authorize()` across all controllers. The base Controller previously had no traits.
 
----
+### Created: `tests/Feature/Controllers/TextEditorControllerTest.php`
 
-### Step 3.5 — Console Commands Slimmed
-
-**`AdvanceDeadlineStages`:**  
-**File:** `app/Console/Commands/AdvanceDeadlineStages.php`  
-**LOC change:** 160 → 75 (−85 LOC, −53%)
-
-- `advanceRecord()` private method (80 LOC) → `ApprovalService::autoAdvance()`
-- `notifyStageApprovers()` private method → removed (inside service)
-- `countWorkingDays()` preserved (scheduling concern, not domain logic)
-
-**`SendDateFieldReminders`:**  
-**File:** `app/Console/Commands/SendDateFieldReminders.php`  
-**LOC change:** 84 → 69 (−15 LOC, −18%)
-
-- Duplicate 4-type recipient-dispatch loop → `NotificationService::notifyRecipients()`
-- Error handling simplified (single try/catch wrapping service call per record)
+New feature tests (4 tests):
+- `it allows a user with view permission to access editor endpoints`
+- `it allows super admin to access editor endpoints`
+- `it denies a user with no module permissions`
+- `it allows a user with a matching stage approver role`
 
 ---
 
 ## Files Created, Modified, or Removed
 
-| File | Action | LOC change |
-|---|---|---|
-| `app/Services/TextEditorReviewService.php` | **Created** | +89 |
-| `tests/Unit/Services/TextEditorReviewServiceTest.php` | **Created** | +126 |
-| `tests/Feature/Console/AdvanceDeadlineStagesTest.php` | **Created** | +72 |
-| `tests/Feature/Console/SendDateFieldRemindersTest.php` | **Created** | +73 |
-| `app/Providers/AppServiceProvider.php` | Modified | +1 |
-| `app/Livewire/Builder/DynamicRecordForm.php` | Modified | 622 → 298 (−324) |
-| `app/Livewire/Builder/DynamicRecordShow.php` | Modified | 523 → 311 (−212) |
-| `app/Console/Commands/AdvanceDeadlineStages.php` | Modified | 160 → 75 (−85) |
-| `app/Console/Commands/SendDateFieldReminders.php` | Modified | 84 → 69 (−15) |
-
-**Total LOC removed from modified files:** ~636 LOC  
-**Total LOC added (new files):** ~360 LOC  
-**Net reduction:** ~276 LOC
-
----
-
-## Commits Made
-
-```
-89f63e72  refactor: extract TextEditorReviewService (Phase 3, step 3.1)
-b17f794b  fix: resolve Gate::before super-admin bypass for review ability
-0fcb6c6d  refactor: wire Phase 2 services into DynamicRecordForm (Phase 3, step 3.3)
-077f74e0  refactor: wire Phase 2 services into DynamicRecordShow (Phase 3, step 3.4)
-b63c9c17  refactor: slim console commands to thin wrappers (Phase 3, step 3.5)
-```
-
----
-
-## Behavioral Differences from Original
-
-| Area | Old behavior | New behavior | Reason |
+| File | Action | Before LOC | After LOC |
 |---|---|---|---|
-| `canAct()` in `DynamicRecordShow` | When stage has `approver_role_id`, only that role sees the approve button (general `approve-X` permission excluded) | Gate policy is now used: users with the role OR general approve permission see the button | RecordPolicy is the authoritative source; the underlying `authorizeApprovalAction()` already allowed general permission |
-| `forwardToBranch()` flash in Form | `session()->flash('error', 'Invalid branch.')` | Service exception message is displayed | Slightly different wording; semantically equivalent |
-| Super-admin review gate | `Gate::allows('review', $record)` short-circuited to `true` for super admin | Returns `false` (correct behavior restored by step 3.2 fix) | Policy always intended to block super admin from reviewing |
+| `app/Repositories/RecordRepository.php` | **Created** | — | 58 |
+| `app/Http/Requests/Api/StoreRecordRequest.php` | **Created** | — | 22 |
+| `app/Http/Requests/Api/UpdateRecordRequest.php` | **Created** | — | 22 |
+| `tests/Feature/Api/DynamicApiControllerTest.php` | **Created** | — | 165 |
+| `tests/Feature/Controllers/TextEditorControllerTest.php` | **Created** | — | 62 |
+| `app/Http/Controllers/Api/DynamicApiController.php` | **Modified** | 173 | 109 |
+| `app/Http/Controllers/TextEditorController.php` | **Modified** | 273 | 251 |
+| `app/Http/Controllers/Controller.php` | **Modified** | 5 | 9 |
 
 ---
 
-*Document generated: 2026-06-22*
+## Approach Decisions (Section 7)
+
+### 7.1 — `checkAbility()` placement: Option A (kept in controller)
+The dual Sanctum token + Spatie permission check is API-token specific and not reusable elsewhere. Splitting it between `Form Request::authorize()` and the controller would fragment related logic for no benefit.
+
+### 7.2 — `UpdateRecordRequest` merge strategy: stays in controller
+The `array_merge($record->data, $validated['data'])` merge remains in the controller action. The Form Request only validates incoming data.
+
+---
+
+## Commits
+
+```
+1c0c4834 refactor: extract RecordRepository from DynamicApiController (Phase 4, step 4.1)
+0878b50c refactor: introduce StoreRecordRequest and UpdateRecordRequest (Phase 4, step 4.2)
+e66b3cb6 refactor: wire TextEditorController to RecordPolicy::viewEditor (Phase 4, step 4.3)
+```
+
+---
+
+## Potential Risks and Follow-up Notes
+
+| Risk | Severity | Action |
+|---|---|---|
+| `RecordRepository::search()` uses MySQL `JSON_UNQUOTE/JSON_EXTRACT` | Low | Tests on SQLite skip (same pattern as `SendDateFieldRemindersTest`); no behavior change |
+| `DynamicRecordIndex` Livewire component has a near-duplicate search query | Low | Out of scope for Phase 4; note for Phase 5 or dedicated query-layer phase |
+| `DynamicRecordShow` stage-field methods (95 LOC) still inline | Low | Deferred from Phase 3; belongs in a StageFieldService (future phase) |
+| `DynamicRecordController::exportCsv()` inline auth | Low | Minor; not in Phase 4 scope — can be addressed in Phase 5 hygiene pass |
+| `AuthorizesRequests` trait now added to base Controller | Low | Enables `$this->authorize()` globally; no behavioral change to existing controllers that don't call it |
