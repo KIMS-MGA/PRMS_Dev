@@ -396,7 +396,7 @@ class TextEditorInstance {
     this.userColor      = container.dataset.userColor || '#6366f1'
     this.readonly       = container.dataset.readonly === '1'
     this.hiddenInput    = document.getElementById(`te-input-${this.fieldSlug}`)
-    this.initialContent = container._teContent || container._teTemplate || ''
+    this.initialContent = container._teContent || container.dataset.content || container._teTemplate || container.dataset.template || ''
     this.debounceTimer  = null
     this.lastContent    = ''
     this.margins        = { top: 50, right: 50, bottom: 50, left: 50 }
