@@ -29,7 +29,8 @@ class DynamicRecordShow extends Component
     public $newComment        = '';
     public $reviewerAttachment = null;
     public $stageFieldValues   = [];
-    protected array $editorTokens = [];
+    public array $editorTokens = [];
+    public array $editorData = [];
 
     protected ApprovalService $approvalService;
     protected EditorTokenService $editorToken;
@@ -71,6 +72,10 @@ class DynamicRecordShow extends Component
         $prefix      = 'editor-' . $this->recordId . '-';
         $editorSlugs = $this->module->fields->where('type', 'text_editor')->pluck('slug')->all();
         $this->editorTokens = $this->editorToken->mint(auth()->user(), $prefix, $editorSlugs);
+
+        foreach ($editorSlugs as $slug) {
+            $this->editorData[$slug] = $this->record->data[$slug] ?? '';
+        }
     }
 
     // ─── Approval Actions ──────────────────────────────────────────────────────
@@ -126,6 +131,15 @@ class DynamicRecordShow extends Component
     public function markReviewDone(string $fieldSlug): void
     {
         if (! Gate::allows('review', $this->record)) abort(403);
+
+        if (! empty($this->editorData)) {
+            $data = $this->record->data ?? [];
+            foreach ($this->editorData as $slug => $html) {
+                $data[$slug] = $html;
+            }
+            $this->record->update(['data' => $data, 'updated_by' => auth()->id()]);
+            $this->record->refresh();
+        }
 
         $this->reviews->recordReview($this->record->id, $fieldSlug, auth()->id());
         $this->approvalService->logReview($this->record, auth()->user());

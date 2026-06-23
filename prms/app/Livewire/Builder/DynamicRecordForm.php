@@ -30,7 +30,7 @@ class DynamicRecordForm extends Component
     public $newComment      = '';
     public $approvalComment = '';
     public $showApprovalPanel = false;
-    protected array $editorTokens = [];
+    public array $editorTokens = [];
 
     protected ApprovalService $approvalService;
     protected RecordPersistenceService $persistence;
@@ -196,6 +196,11 @@ class DynamicRecordForm extends Component
         if (! $this->record) return;
         if (! Gate::allows('review', $this->record)) abort(403);
 
+        // Always persist current editor content when marking a review done.
+        if ($this->data) {
+            $this->record->update(['data' => $this->data, 'updated_by' => auth()->id()]);
+        }
+
         $this->reviews->recordReview($this->record->id, $fieldSlug, auth()->id());
         $this->approvalService->logReview($this->record, auth()->user());
 
@@ -205,9 +210,6 @@ class DynamicRecordForm extends Component
         if ($reviewerCount > 0 && $doneCount >= $reviewerCount) {
             // All reviewers done — auto-approve without re-checking the approve gate,
             // because the reviewer role does not hold approve permission.
-            if ($this->record && $this->data) {
-                $this->record->update(['data' => $this->data, 'updated_by' => auth()->id()]);
-            }
             $this->approvalService->approve($this->record, auth()->user(), '', false);
             $this->status = $this->record->fresh()->status;
             $this->approvalComment = '';
