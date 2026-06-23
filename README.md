@@ -1,66 +1,152 @@
-# Summary of Regression Test
+# Branch Summary: `bugfix/hocuspocus-data-sync-loss`
 
-## Overview
-This document summarizes the testing and architectural updates implemented in the `regression/phase-1-5-validation-and-fixes` branch. These changes harden, clean, and validate the application's core logic, ensuring that the modular design architecture is followed without bypasses.
+## Purpose
 
----
-
-## Architectural Verification
-The refactoring process did **not** bypass the target architecture. Instead, it successfully decoupled complex business logic from the UI (Livewire components) and controllers, migrating them into standalone, unit-testable classes:
-* **Domain Services** encapsulate core workflows (approvals, notifications, file versioning, persistence).
-* **Repositories** handle database queries and dynamic filtering.
-* **Form Requests** clean up controller-level validation.
-* **Policies** consolidate access control and authorization checks.
+Fix collaborative text editor data loss and authentication failures affecting the Proponent form and Reviewer show views in the dynamic record workflow.
 
 ---
 
-## Differences: `regression/phase-1-5-validation-and-fixes` vs `main`
+## Bugs Fixed
 
-### 1. Extraction of Domain Services
-Business rules are isolated into single-responsibility service classes:
-* **[ApprovalService](file:///d:/git-PRMS%20Dev/PRMS_Dev/prms/app/Services/ApprovalService.php)**: Manages submission, stage transitions, forwarding, reviewer log actions, and scheduled auto-approvals.
-* **[NotificationService](file:///d:/git-PRMS%20Dev/PRMS_Dev/prms/app/Services/NotificationService.php)**: Orchestrates stage entry alerts based on recipient configurations.
-* **[FileVersioningService](file:///d:/git-PRMS%20Dev/PRMS_Dev/prms/app/Services/FileVersioningService.php)**: Standardizes multi-version file uploads and physical file cleanup on deletion.
-* **[RecordPersistenceService](file:///d:/git-PRMS%20Dev/PRMS_Dev/prms/app/Services/RecordPersistenceService.php)**: Validates and persists typed record data safely.
-* **[EditorTokenService](file:///d:/git-PRMS%20Dev/PRMS_Dev/prms/app/Services/EditorTokenService.php)** & **[TextEditorReviewService](file:///d:/git-PRMS%20Dev/PRMS_Dev/prms/app/Services/TextEditorReviewService.php)**: Encapsulate token validation and comments for collaborative text editing.
+### Bug 1 — Proponent Save / Submit Wipes Editor Content
 
-### 2. Consolidated Dynamic Validation Rules
-* **[RecordValidationRuleFactory](file:///d:/git-PRMS%20Dev/PRMS_Dev/prms/app/Support/RecordValidationRuleFactory.php)**: Centralized logic generates rules dynamically for both the Livewire frontend components and the API controllers, ensuring data validation integrity.
+**Symptom:** Saving a draft or submitting a proposal caused the text editor content to be cleared in the database.
 
-### 3. Controller and Query Refactoring
-* **[RecordRepository](file:///d:/git-PRMS%20Dev/PRMS_Dev/prms/app/Repositories/RecordRepository.php)**: Decoupled filtering, sorting, and pagination logic from `DynamicApiController`.
-* **[StoreRecordRequest](file:///d:/git-PRMS%20Dev/PRMS_Dev/prms/app/Http/Requests/Api/StoreRecordRequest.php)** & **[UpdateRecordRequest](file:///d:/git-PRMS%20Dev/PRMS_Dev/prms/app/Http/Requests/Api/UpdateRecordRequest.php)**: Standardized request payload authorization and validation.
+**Root cause:** `$editorTokens` was declared `protected` in both Livewire components. Livewire only serialises `public` properties into its snapshot. On every network round-trip (save, submit, approve, comment), the snapshot deserialized with an empty `$editorTokens`, causing `render()` to call `EditorTokenService::mint()` again. `mint()` **revokes all existing tokens before creating new ones**, so the token the browser held became invalid mid-session. The Hocuspocus WebSocket disconnected, `isSynced` dropped to `false`, and the commit hook (which had the `isSynced` guard) was blocked from pushing editor content into the Livewire payload — leaving an empty or stale value to be saved.
 
-### 4. Backed Enums
-* Replaced loose magic strings with **[ApprovalAction](file:///d:/git-PRMS%20Dev/PRMS_Dev/prms/app/Enums/ApprovalAction.php)** and **[RecordStatus](file:///d:/git-PRMS%20Dev/PRMS_Dev/prms/app/Enums/RecordStatus.php)** backed enums.
-
-### 5. Notification Bell Refactoring
-* Swapped out heavy Livewire polling in the main layout with a pure client-side **Alpine.js** polling structure fetching a dedicated JSON route.
-
-### 6. Security and Operations Hardening
-* **[RecordPolicy](file:///d:/git-PRMS%20Dev/PRMS_Dev/prms/app/Policies/RecordPolicy.php)**: Centralizes module action permissions, registered in `AppServiceProvider`.
-* **[DispatchWebhook](file:///d:/git-PRMS%20Dev/PRMS_Dev/prms/app/Jobs/DispatchWebhook.php)**: Dispatches webhooks asynchronously via queued jobs.
-* **[EnsureUserIsActive](file:///d:/git-PRMS%20Dev/PRMS_Dev/prms/app/Http/Middleware/EnsureUserIsActive.php)**: Enforces account activation status checking.
-* Caches role resolutions in `ProcessWorkflows` listener to minimize DB queries.
+**Fix:** Changed `protected array $editorTokens` → `public array $editorTokens` in both components. The `render()` guard (`if (empty($this->editorTokens))`) now correctly skips re-minting on every subsequent request.
 
 ---
 
-## Regression Testing and Verification Results
+### Bug 2 — Reviewer Edits Not Saved
 
-The branch introduces comprehensive coverage containing both Unit and Feature test suites built with Pest.
+**Symptom:** Comments and edits made by a Reviewer in the collaborative text editor were not persisted when "Mark Review Done" was clicked.
 
-### Summary of Executed Tests
-* **Unit Tests**: Verifies enums, validation rule factories, and each domain service's operations under mock database states.
-* **Feature Tests**: Verifies api endpoint authorization, text editor validation, webhook signatures, webhook queuing, module structure parsing, policy evaluation gates, and console command schedules.
-* **Security Hardening Tests**: Validates comments constraints, platform-admin panel guards, CSV formula injection protection, and invalid type parsing.
+**Root cause:** `DynamicRecordShow` had no `$data` / `$editorData` property and no hidden `<input wire:model>` in the blade. The editor content existed only in the Hocuspocus CRDT (binary state) but never reached the PHP component — so `markReviewDone()` had nothing to write to `records.data`.
 
-### Test Correction Note
-> [!NOTE]
-> Added `'is_active' => true` to the definition array in **[UserFactory.php](file:///d:/git-PRMS%20Dev/PRMS_Dev/prms/database/factories/UserFactory.php)**. This prevents auth tests from failing because newly created mock users without explicit active attributes were previously treated as inactive by the newly added `EnsureUserIsActive` middleware.
+**Fix:**
+- Added `public array $editorData = []` to `DynamicRecordShow`, seeded from `$record->data` in `mount()`.
+- Added a hidden input (`<input type="text" style="display:none" wire:model="editorData.{slug}">`) in `dynamic-record-show.blade.php` for each text editor field, giving the JS commit hook a target.
+- `markReviewDone()` now merges `$editorData` into `$record->data` before recording the review.
 
-### Verification Run Outputs
-The entire test suite was executed locally and returned:
-* **Total Tests**: 187
-* **Passed**: 184
-* **Skipped**: 3 (MySQL-specific JSON search filters tests dynamically skipped on SQLite in-memory DB)
-* **Status**: **PASSING**
+---
+
+### Bug 3 — Partial Reviews Not Persisting Editor Content
+
+**Symptom:** When a reviewer marked a field done (but was not the last reviewer), no data was saved, leaving the record in a potentially stale state.
+
+**Root cause:** The `records.data` save inside `markReviewDone()` was placed inside the all-reviewers-done quorum block, so it only ran when the final reviewer acted.
+
+**Fix:** Moved the save unconditionally before the quorum check in both `DynamicRecordForm` and `DynamicRecordShow`.
+
+---
+
+### Bug 4 — Livewire Commit Hook Removed (Regression)
+
+**Symptom:** Editor HTML was not being injected into Livewire requests, making all saves dependent on Alpine's deferred `wire:model` binding — which morphdom could reset between the last `onUpdate` event and the save action.
+
+**Root cause:** Commit `e74edad7` removed the Livewire commit hook entirely, citing it as "buggy." The actual bug was a missing `isSynced` guard (added in `ddc04b07`), not the hook itself.
+
+**Fix:** Reinstated the `Livewire.hook('commit', ...)` in `resources/js/app.js` with:
+- `isSynced` guard — prevents a blank, unsynced editor from overwriting saved content
+- `isNew` bypass — new records have no server content to protect, so the guard is skipped
+- `data-readonly` check — skips readonly editors (reviewers who already marked done)
+- Dynamic `getAttribute('wire:model')` — works for both `data.{slug}` (form) and `editorData.{slug}` (show) without hardcoding
+
+---
+
+### Bug 5 — Hocuspocus Authentication Always Failing
+
+**Symptom:** Hocuspocus WebSocket connections failed immediately with `[onAuthenticate] Authentication failed` in the server log. The editor showed "Connecting…" and never synced.
+
+**Root cause:** Three misconfigured defaults in `hocuspocus/server.js`:
+
+| Variable | Wrong default | Correct value |
+|---|---|---|
+| `APP_URL` | `http://app` (Docker hostname) | `http://localhost:8000` |
+| `DB_USER` | `prms` | `root` (Laravel uses `DB_USERNAME`) |
+| `TABLE_PREFIX` | `jea_` | `""` (Laravel uses empty prefix) |
+
+The Node.js process does not read Laravel's `.env` automatically, so all three fell back to incorrect Docker-era defaults.
+
+**Fix:**
+- Added `dotenv` as a dependency to `hocuspocus/package.json`
+- `server.js` now loads `../.env` (the parent Laravel `.env`) at startup via `dotenv.config()`
+- DB user resolution: `process.env.DB_USERNAME || process.env.DB_USER || 'root'` (handles both Laravel and Docker conventions)
+- Table prefix: uses nullish coalescing (`??`) so an explicit empty string in `.env` is respected
+
+---
+
+## Files Changed
+
+### PHP — Livewire Components
+
+| File | Change |
+|---|---|
+| `app/Livewire/Builder/DynamicRecordForm.php` | `protected → public` on `$editorTokens`; `markReviewDone()` saves data unconditionally before quorum check |
+| `app/Livewire/Builder/DynamicRecordShow.php` | Same token fix; new `public array $editorData`; `mount()` seeds `$editorData`; `markReviewDone()` saves `$editorData` before recording review |
+
+### Blade — Show View
+
+| File | Change |
+|---|---|
+| `resources/views/livewire/builder/dynamic-record-show.blade.php` | Added `<input type="text" style="display:none" wire:model="editorData.{slug}">` after each text editor mount container |
+
+### JavaScript
+
+| File | Change |
+|---|---|
+| `resources/js/app.js` | Reinstated `Livewire.hook('commit', ...)` with `isSynced` guard, readonly check, `isNew` bypass, and dynamic `wire:model` resolution |
+
+### Hocuspocus Server
+
+| File | Change |
+|---|---|
+| `hocuspocus/server.js` | Load parent `.env` via dotenv; fix `APP_URL`, `DB_USERNAME`, `TABLE_PREFIX` defaults |
+| `hocuspocus/package.json` | Added `dotenv ^16.0.0` dependency |
+| `hocuspocus/package-lock.json` | First-time tracked; generated by `npm install` |
+
+---
+
+## Deployment Checklist
+
+After pulling this branch, the following one-time steps are required:
+
+- [ ] **`npm install`** inside `prms/hocuspocus/` — installs the new `dotenv` dependency
+- [ ] **`npm run build`** inside `prms/` — recompiles `app.js` with the reinstated commit hook
+- [ ] **Restart the Hocuspocus server** — picks up the new `server.js` with dotenv loading
+- [ ] Verify `prms/.env` has `APP_URL=http://localhost:{port}` set to your local dev URL
+
+No database migrations required. No breaking changes to existing data.
+
+---
+
+## Data Flow After Fix
+
+```
+[User types in TipTap editor]
+        │
+        ▼
+[HocuspocusProvider syncs via WebSocket → isSynced = true]
+        │
+        ▼
+[onUpdate → syncToLivewire() sets hiddenInput.value + dispatches input event]
+        │
+        ▼
+[Livewire commit hook fires before every request]
+   → reads editor.getHTML()
+   → sets hiddenInput.value
+   → injects directly into commit.updates[wire:model]
+        │
+        ▼
+[Livewire request carries editor HTML in payload]
+        │
+        ▼
+[PHP: $data[slug] or $editorData[slug] updated in component]
+        │
+        ▼
+[Save action: persistRecord() / markReviewDone() → records.data written to DB]
+        │
+        ▼ (parallel)
+[Hocuspocus: CRDT binary_state written to text_editor_documents]
+```
