@@ -407,6 +407,7 @@ class TextEditorInstance {
     // per-browser preference; defaults to 100%.
     this.zoom           = parseFloat(localStorage.getItem(`te-zoom-${this.fieldSlug}`)) || 1
     this.suggestionMode = false
+    this.isSynced       = false
 
     // Expose instance on container so external code (commit hook, buttons) can sync
     container._teInstance = this
@@ -429,9 +430,10 @@ class TextEditorInstance {
         name: docName,
         document: this.ydoc,
         token: this.token,
-        onConnect:    () => this.updateStatus('connected'),
-        onDisconnect: () => this.updateStatus('disconnected'),
+        onConnect:    () => { this.isSynced = false; this.updateStatus('connected') },
+        onDisconnect: () => { this.isSynced = false; this.updateStatus('disconnected') },
         onSynced:     () => {
+          this.isSynced = true;
           this.updateStatus('synced')
           // If Hocuspocus returned an empty doc (never synced before — e.g. record
           // was created via the new-record form which has no Hocuspocus connection),
@@ -2879,6 +2881,10 @@ document.addEventListener('livewire:initialized', () => {
       const html = instance.editor.getHTML()
       // Only sync to Livewire on form components (hiddenInput exists, not readonly)
       if (!instance.hiddenInput || instance.readonly) return
+
+      // Abort if existing record editor is not synced yet (prevents blank editor overwriting DB on offline/errors)
+      const isNew = instance.recordId === 'new'
+      if (!isNew && !instance.isSynced) return
       instance.hiddenInput.value = html
       // Also inject directly into the commit payload as a flat-key update
       if (commit.updates) commit.updates[`data.${slug}`] = html
