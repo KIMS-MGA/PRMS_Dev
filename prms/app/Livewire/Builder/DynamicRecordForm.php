@@ -293,7 +293,7 @@ class DynamicRecordForm extends Component
                 $value = $this->data[$field->slug] ?? null;
                 if (is_object($value) && method_exists($value, 'store')) {
                     $this->validate([
-                        'data.' . $field->slug => 'file|max:51200|mimes:pdf,doc,docx,xls,xlsx,png,jpg,jpeg,gif,zip|extensions:pdf,doc,docx,xls,xlsx,png,jpg,jpeg,gif,zip',
+                        'data.' . $field->slug => 'file|max:51200|mimes:pdf,doc,docx,xls,xlsx,png,jpg,jpeg,gif,zip',
                     ]);
                 }
             }
