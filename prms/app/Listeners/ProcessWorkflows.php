@@ -3,15 +3,14 @@
 namespace App\Listeners;
 
 use App\Events\RecordSaved;
+use App\Jobs\DispatchWebhook;
 use App\Models\Workflow;
 use App\Models\WorkflowAction;
 use App\Models\Webhook;
-use App\Models\WebhookLog;
 use App\Models\User;
 use App\Notifications\DynamicNotification;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
-use Illuminate\Support\Facades\Http;
 use App\Mail\StageNotificationMail;
 
 class ProcessWorkflows
@@ -102,32 +101,7 @@ class ProcessWorkflows
                 'timestamp' => now()->toIso8601String(),
             ];
 
-            try {
-                $headers = ['Content-Type' => 'application/json', 'X-PRMS-Event' => $event->trigger];
-                if ($webhook->secret) {
-                    $headers['X-PRMS-Signature'] = hash_hmac('sha256', json_encode($payload), $webhook->secret);
-                }
-
-                $response = Http::timeout(10)->withHeaders($headers)->post($webhook->url, $payload);
-
-                WebhookLog::create([
-                    'webhook_id'    => $webhook->id,
-                    'event'         => $event->trigger,
-                    'payload'       => $payload,
-                    'response_code' => $response->status(),
-                    'response_body' => substr($response->body(), 0, 1000),
-                    'success'       => $response->successful(),
-                ]);
-            } catch (\Throwable $e) {
-                WebhookLog::create([
-                    'webhook_id'    => $webhook->id,
-                    'event'         => $event->trigger,
-                    'payload'       => $payload,
-                    'response_code' => null,
-                    'response_body' => $e->getMessage(),
-                    'success'       => false,
-                ]);
-            }
+            DispatchWebhook::dispatch($webhook, $event->trigger, $payload);
         }
     }
 
