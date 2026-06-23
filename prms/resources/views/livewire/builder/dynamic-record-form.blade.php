@@ -205,7 +205,8 @@
                                 @endphp
                                 {{-- Hidden input lives OUTSIDE wire:ignore so Livewire can bind to it --}}
                                 <input
-                                    type="hidden"
+                                    type="text"
+                                    style="display: none;"
                                     wire:model="data.{{ $field->slug }}"
                                     id="te-input-{{ $field->slug }}"
                                 >
