@@ -32,12 +32,22 @@ class DynamicRecordForm extends Component
     public $showApprovalPanel = false;
     protected array $editorTokens = [];
 
-    public function __construct(
-        private readonly ApprovalService $approvalService,
-        private readonly RecordPersistenceService $persistence,
-        private readonly EditorTokenService $editorToken,
-        private readonly TextEditorReviewService $reviews,
-    ) {}
+    protected ApprovalService $approvalService;
+    protected RecordPersistenceService $persistence;
+    protected EditorTokenService $editorToken;
+    protected TextEditorReviewService $reviews;
+
+    public function boot(
+        ApprovalService $approvalService,
+        RecordPersistenceService $persistence,
+        EditorTokenService $editorToken,
+        TextEditorReviewService $reviews,
+    ): void {
+        $this->approvalService = $approvalService;
+        $this->persistence     = $persistence;
+        $this->editorToken     = $editorToken;
+        $this->reviews         = $reviews;
+    }
 
     public function mount($moduleSlug, $record = null): void
     {
