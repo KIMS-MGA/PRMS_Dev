@@ -134,7 +134,15 @@ class DynamicRecordShow extends Component
         $doneCount     = $this->reviews->countDone($this->record->id, $fieldSlug);
 
         if ($reviewerCount > 0 && $doneCount >= $reviewerCount) {
-            $this->approve();
+            // All stage reviewers done — auto-approve without re-checking the approve gate,
+            // because the reviewer role does not hold approve permission.
+            $this->approvalService->approve($this->record, auth()->user(), '');
+            $this->record = $this->record->fresh();
+            $msg = $this->record->status === 'Completed'
+                ? 'All reviews completed. Record approved successfully.'
+                : 'All reviews completed. Record advanced to next stage.';
+            $this->dispatch('review-marked-done', fieldSlug: $fieldSlug);
+            $this->dispatch('notify', type: 'success', message: $msg);
             return;
         }
 

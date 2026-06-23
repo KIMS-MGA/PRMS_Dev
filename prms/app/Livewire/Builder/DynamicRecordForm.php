@@ -202,7 +202,18 @@ class DynamicRecordForm extends Component
         $doneCount     = $this->reviews->countDone($this->record->id, $fieldSlug);
 
         if ($reviewerCount > 0 && $doneCount >= $reviewerCount) {
-            $this->approve();
+            // All reviewers done — auto-approve without re-checking the approve gate,
+            // because the reviewer role does not hold approve permission.
+            if ($this->record && $this->data) {
+                $this->record->update(['data' => $this->data, 'updated_by' => auth()->id()]);
+            }
+            $this->approvalService->approve($this->record, auth()->user(), '');
+            $this->status = $this->record->fresh()->status;
+            $this->approvalComment = '';
+            $msg = $this->record->status === 'Completed'
+                ? 'All reviews completed. Record approved successfully.'
+                : 'All reviews completed. Record advanced to next stage.';
+            session()->flash('message', $msg);
             return;
         }
 
