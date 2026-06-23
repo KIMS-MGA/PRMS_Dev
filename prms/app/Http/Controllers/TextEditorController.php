@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Models\Record;
-use App\Models\WorkflowStage;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -27,33 +26,12 @@ class TextEditorController extends Controller
         ]);
     }
 
-    private function authorizeRecordAccess(Request $request, Record $record): void
-    {
-        $user = $request->user();
-        if ($user->hasRole('super admin')) return;
-
-        $module = $record->module;
-        if (!$module) abort(403);
-        $slug = $module->slug;
-
-        if ($user->can("view-{$slug}") || $user->can("edit-{$slug}") ||
-            $user->can("approve-{$slug}") || $user->can("review-{$slug}")) {
-            return;
-        }
-
-        $stageRoleIds = WorkflowStage::where('module_id', $module->id)
-            ->pluck('approver_role_id')->filter();
-        if ($user->roles->pluck('id')->intersect($stageRoleIds)->isNotEmpty()) return;
-
-        abort(403);
-    }
-
     /**
      * Get input history log for a specific field on a record.
      */
     public function getHistory(Request $request, Record $record, string $fieldSlug)
     {
-        $this->authorizeRecordAccess($request, $record);
+        $this->authorize('viewEditor', $record);
 
         $history = DB::table('text_editor_histories')
             ->join('users', 'text_editor_histories.user_id', '=', 'users.id')
@@ -76,7 +54,7 @@ class TextEditorController extends Controller
      */
     public function storeHistory(Request $request, Record $record, string $fieldSlug)
     {
-        $this->authorizeRecordAccess($request, $record);
+        $this->authorize('viewEditor', $record);
 
         $request->validate([
             'action'  => 'required|in:insert,delete',
@@ -102,7 +80,7 @@ class TextEditorController extends Controller
      */
     public function getComments(Request $request, Record $record, string $fieldSlug)
     {
-        $this->authorizeRecordAccess($request, $record);
+        $this->authorize('viewEditor', $record);
 
         $rows = DB::table('text_editor_comments')
             ->join('users', 'text_editor_comments.user_id', '=', 'users.id')
@@ -136,7 +114,7 @@ class TextEditorController extends Controller
      */
     public function storeReply(Request $request, Record $record, string $fieldSlug, string $commentId)
     {
-        $this->authorizeRecordAccess($request, $record);
+        $this->authorize('viewEditor', $record);
 
         $request->validate([
             'body' => 'required|string|max:5000',
@@ -178,7 +156,7 @@ class TextEditorController extends Controller
      */
     public function storeComment(Request $request, Record $record, string $fieldSlug)
     {
-        $this->authorizeRecordAccess($request, $record);
+        $this->authorize('viewEditor', $record);
 
         $request->validate([
             'comment_id'  => 'required|uuid',
@@ -211,7 +189,7 @@ class TextEditorController extends Controller
      */
     public function storeImage(Request $request, Record $record, string $fieldSlug)
     {
-        $this->authorizeRecordAccess($request, $record);
+        $this->authorize('viewEditor', $record);
 
         $request->validate([
             'image' => 'required|image|mimes:jpeg,png,gif,webp|max:5120',
@@ -229,7 +207,7 @@ class TextEditorController extends Controller
      */
     public function resolveComment(Request $request, Record $record, string $fieldSlug, string $commentId)
     {
-        $this->authorizeRecordAccess($request, $record);
+        $this->authorize('viewEditor', $record);
 
         $root = DB::table('text_editor_comments')
             ->where('record_id', $record->id)
@@ -259,7 +237,7 @@ class TextEditorController extends Controller
      */
     public function getReviewStatus(Request $request, Record $record, string $fieldSlug)
     {
-        $this->authorizeRecordAccess($request, $record);
+        $this->authorize('viewEditor', $record);
 
         $reviews = DB::table('text_editor_reviews')
             ->join('users', 'text_editor_reviews.user_id', '=', 'users.id')
